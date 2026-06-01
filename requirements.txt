@@ -1,0 +1,9 @@
+aiofiles
+discord.py
+matplotlib
+numpy
+openai
+opencc-python-reimplemented
+python-dotenv
+requests
+sympy
