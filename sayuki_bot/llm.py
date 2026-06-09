@@ -9,30 +9,13 @@ from openai import AsyncOpenAI
 import math_tools
 
 from .search import BrowserScan, search_web
+from .tool_tags import MEMORY_TOOL_NAMES, find_balanced_tool_tags
 
 
 logger = logging.getLogger(__name__)
 
-MEMORY_SIDE_EFFECT_PATTERNS = [
-    r"\[\[MEM_SET:.*?\]\]",
-    r"\[\[MEM_HOBBY:.*?\]\]",
-    r"\[\[MEM_GOSSIP:.*?\]\]",
-    r"\[\[MEM_EVENT:.*?\]\]",
-    r"\[\[MEM_EVENT_FOR:.*?\]\]",
-    r"\[\[MEMORY:.*?\]\]",
-    r"\[\[EDIT_MEMORY:.*?\]\]",
-    r"\[\[DELETE_MEMORY:.*?\]\]",
-    r"\[\[PERMANENT_MEMORY:.*?\]\]",
-    r"\[\[EDIT_PERMANENT_MEMORY:.*?\]\]",
-    r"\[\[DELETE_PERMANENT_MEMORY:.*?\]\]",
-]
-
-
 def _collect_memory_side_effect_tags(reply: str) -> list[str]:
-    tags: list[str] = []
-    for pattern in MEMORY_SIDE_EFFECT_PATTERNS:
-        tags.extend(re.findall(pattern, reply))
-    return tags
+    return [tag.raw for tag in find_balanced_tool_tags(reply, MEMORY_TOOL_NAMES)]
 
 
 def _message_without_match(reply: str, match: re.Match[str]) -> str:

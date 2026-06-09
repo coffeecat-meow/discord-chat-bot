@@ -18,6 +18,7 @@ from .llm import OpenRouterLLM
 from .memory import MemoryManager
 from .models import Request
 from .state import BotStats
+from .tool_tags import MEMORY_TOOL_NAMES, find_balanced_tool_tags, strip_balanced_tool_tags
 from .ui import InteractiveAskView
 
 
@@ -79,6 +80,11 @@ def _preview_text(text: str, limit: int = 240) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def _strip_hidden_tool_tags(text: str) -> str:
+    text = strip_balanced_tool_tags(text, MEMORY_TOOL_NAMES)
+    return TOOL_TAG_RE.sub("", text)
 
 
 class Scheduler:
@@ -1046,7 +1052,7 @@ class Scheduler:
                     await self.tool_stats_mgr.record_tool("BUTTON_UI", 0.0, True)
 
         clean_text = self._apply_ping_tags(raw_response, interaction_obj)
-        clean_text = TOOL_TAG_RE.sub("", clean_text)
+        clean_text = _strip_hidden_tool_tags(clean_text)
         clean_text = re.sub(r"<think>.*?(?:</think>|$)", "", clean_text, flags=re.DOTALL).strip()
         clean_text = self.opencc_converter.convert(clean_text)
 
@@ -1103,100 +1109,77 @@ class Scheduler:
             )
 
     async def _apply_memory_tags(self, raw_response: str) -> None:
-        memory_tool_count = len(
-            re.findall(
-                r"\[\[(?:MEM_SET|MEM_HOBBY|MEM_GOSSIP|MEM_EVENT|MEM_EVENT_FOR|MEMORY|EDIT_MEMORY|DELETE_MEMORY|PERMANENT_MEMORY|EDIT_PERMANENT_MEMORY|DELETE_PERMANENT_MEMORY):",
-                raw_response,
-                flags=re.DOTALL,
-            )
-        )
+        memory_tags = find_balanced_tool_tags(raw_response, MEMORY_TOOL_NAMES)
+        memory_tool_count = len(memory_tags)
+        field_paths = {
+            "name": "name",
+            "nickname": "basic_info.nickname",
+            "location": "basic_info.location",
+            "mbti": "basic_info.mbti",
+            "relationship": "relationship",
+            "recent_events": "recent_events",
+        }
 
-        for target_id, field, value in re.findall(
-            r"\[\[MEM_SET:\s*(\d+)\s*\|\s*(name|nickname|location|mbti|relationship|recent_events)\s*\|\s*(.*?)\s*\]\]",
-            raw_response,
-            flags=re.DOTALL,
-        ):
-            field_paths = {
-                "name": "name",
-                "nickname": "basic_info.nickname",
-                "location": "basic_info.location",
-                "mbti": "basic_info.mbti",
-                "relationship": "relationship",
-                "recent_events": "recent_events",
-            }
-            await self.memory_mgr.set_profile_field(target_id, field_paths[field], value)
+        for tag in memory_tags:
+            if tag.name == "MEM_SET":
+                parts = [part.strip() for part in tag.body.split("|", 2)]
+                if len(parts) == 3 and parts[0].isdigit() and parts[1] in field_paths:
+                    await self.memory_mgr.set_profile_field(parts[0], field_paths[parts[1]], parts[2])
 
-        for target_id, hobby in re.findall(r"\[\[MEM_HOBBY:\s*(\d+)\s*\|\s*(.*?)\s*\]\]", raw_response, flags=re.DOTALL):
-            await self.memory_mgr.add_hobby(target_id, hobby)
+            elif tag.name == "MEM_HOBBY":
+                parts = [part.strip() for part in tag.body.split("|", 1)]
+                if len(parts) == 2 and parts[0].isdigit():
+                    await self.memory_mgr.add_hobby(parts[0], parts[1])
 
-        for target_id, source, content in re.findall(
-            r"\[\[MEM_GOSSIP:\s*(\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\]\]",
-            raw_response,
-            flags=re.DOTALL,
-        ):
-            await self.memory_mgr.add_gossip(target_id, source, content)
+            elif tag.name == "MEM_GOSSIP":
+                parts = [part.strip() for part in tag.body.split("|", 2)]
+                if len(parts) == 3 and parts[0].isdigit():
+                    await self.memory_mgr.add_gossip(parts[0], parts[1], parts[2])
 
-        for target_id, event_type, event in re.findall(
-            r"\[\[MEM_EVENT:\s*(\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\]\]",
-            raw_response,
-            flags=re.DOTALL,
-        ):
-            await self.memory_mgr.add_important_event(target_id, event, event_type)
+            elif tag.name == "MEM_EVENT":
+                parts = [part.strip() for part in tag.body.split("|", 2)]
+                if len(parts) == 3 and parts[0].isdigit():
+                    await self.memory_mgr.add_important_event(parts[0], parts[2], parts[1])
 
-        for target_id, date_text, event_type, source, event in re.findall(
-            r"\[\[MEM_EVENT_FOR:\s*(\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\]\]",
-            raw_response,
-            flags=re.DOTALL,
-        ):
-            await self.memory_mgr.add_important_event(
-                target_id,
-                event,
-                event_type,
-                _normalize_memory_date(date_text),
-                source=source,
-                recorded_at=datetime.now(TW_TZ).strftime("%Y-%m-%d"),
-            )
+            elif tag.name == "MEM_EVENT_FOR":
+                parts = [part.strip() for part in tag.body.split("|", 4)]
+                if len(parts) == 5 and parts[0].isdigit():
+                    await self.memory_mgr.add_important_event(
+                        parts[0],
+                        parts[4],
+                        parts[2],
+                        _normalize_memory_date(parts[1]),
+                        source=parts[3],
+                        recorded_at=datetime.now(TW_TZ).strftime("%Y-%m-%d"),
+                    )
 
-        for match in re.findall(r"\[\[MEMORY:\s*(.*?)\]\]", raw_response, flags=re.DOTALL):
-            parts = match.split("|", 1)
-            if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-                target_id = parts[0].strip()
-                content = parts[1].strip()
-                if target_id.isdigit():
-                    await self.memory_mgr.add_memory(target_id, content, None)
+            elif tag.name == "MEMORY":
+                parts = [part.strip() for part in tag.body.split("|", 1)]
+                if len(parts) == 2 and parts[0].isdigit():
+                    await self.memory_mgr.add_memory(parts[0], parts[1], None)
 
-        for match in re.findall(r"\[\[EDIT_MEMORY:\s*(.*?)\]\]", raw_response, flags=re.DOTALL):
-            parts = match.split("|", 1)
-            if len(parts) == 2:
-                target_id = parts[0].strip()
-                new_content = parts[1].strip()
-                if target_id.isdigit():
-                    await self.memory_mgr.update_memory(target_id, None, "", new_content)
+            elif tag.name == "EDIT_MEMORY":
+                parts = [part.strip() for part in tag.body.split("|", 1)]
+                if len(parts) == 2 and parts[0].isdigit():
+                    await self.memory_mgr.update_memory(parts[0], None, "", parts[1])
 
-        for match in re.findall(r"\[\[DELETE_MEMORY:\s*(.*?)\]\]", raw_response, flags=re.DOTALL):
-            parts = match.split("|", 1)
-            if len(parts) == 2:
-                target_id = parts[0].strip()
-                path = parts[1].strip()
-                if target_id.isdigit():
-                    await self.memory_mgr.delete_memory(target_id, None, path)
+            elif tag.name == "DELETE_MEMORY":
+                parts = [part.strip() for part in tag.body.split("|", 1)]
+                if len(parts) == 2 and parts[0].isdigit():
+                    await self.memory_mgr.delete_memory(parts[0], None, parts[1])
 
-        for match in re.findall(r"\[\[PERMANENT_MEMORY:\s*(.*?)\]\]", raw_response, flags=re.DOTALL):
-            content = match.strip()
-            if content:
-                await self.memory_mgr.add_permanent_memory(content)
+            elif tag.name == "PERMANENT_MEMORY":
+                if tag.body:
+                    await self.memory_mgr.add_permanent_memory(tag.body)
 
-        for match in re.findall(r"\[\[EDIT_PERMANENT_MEMORY:\s*(.*?)\]\]", raw_response, flags=re.DOTALL):
-            parts = match.split(":", 1)
-            if len(parts) == 2:
-                fact_id = parts[0].strip()
-                new_content = parts[1].strip()
-                await self.memory_mgr.update_permanent_memory(fact_id, new_content)
+            elif tag.name == "EDIT_PERMANENT_MEMORY":
+                parts = [part.strip() for part in tag.body.split(":", 1)]
+                if len(parts) == 2:
+                    await self.memory_mgr.update_permanent_memory(parts[0], parts[1])
 
-        for match in re.findall(r"\[\[DELETE_PERMANENT_MEMORY:\s*(.*?)\]\]", raw_response, flags=re.DOTALL):
-            fact_id = match.strip()
-            if fact_id:
-                await self.memory_mgr.delete_permanent_memory(fact_id)
+            elif tag.name == "DELETE_PERMANENT_MEMORY":
+                if tag.body:
+                    await self.memory_mgr.delete_permanent_memory(tag.body)
 
         if memory_tool_count and self.tool_stats_mgr:
             for _ in range(memory_tool_count):
