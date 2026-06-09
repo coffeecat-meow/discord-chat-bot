@@ -69,7 +69,7 @@ class OpenRouterLLM:
         if not self.use_reasoning_effort or not self.reasoning_effort:
             return {}
 
-        return {"reasoning": {"effort": self.reasoning_effort}}
+        return {"extra_body": {"reasoning": {"effort": self.reasoning_effort}}}
 
     async def describe_image_async(self, image_url: str) -> str:
         messages = [
