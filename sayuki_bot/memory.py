@@ -191,6 +191,41 @@ class MemoryManager:
 
         return _truncate_context(json.dumps(profiles, ensure_ascii=False, indent=2))
 
+    def get_relevant_memory_context(self, user_ids: set[str] | set[int]) -> str:
+        if not self.data:
+            return "無"
+
+        relevant_ids = {str(user_id) for user_id in user_ids}
+        profiles = []
+        for uid in sorted(relevant_ids):
+            if uid in self.data:
+                profiles.append(self._ensure_user(uid))
+
+        relevant_text = json.dumps(profiles, ensure_ascii=False, indent=2) if profiles else "無"
+
+        index_lines = []
+        for uid in sorted(self.data):
+            if uid in relevant_ids:
+                continue
+
+            profile = self._ensure_user(uid)
+            name = profile.get("name", UNKNOWN)
+            nickname = profile.get("basic_info", {}).get("nickname", UNKNOWN)
+            recent = profile.get("recent_events", UNKNOWN)
+            event_count = len(profile.get("important_events", []))
+            index_lines.append(
+                f"- {name} (ID:{uid})，暱稱:{nickname}，近況:{recent}，重要事件:{event_count}筆"
+            )
+
+        index_text = "\n".join(index_lines) if index_lines else "無"
+        return _truncate_context(
+            "[相關使用者完整記憶]\n"
+            f"{relevant_text}\n\n"
+            "[其他使用者記憶索引]\n"
+            f"{index_text}\n"
+            "若需要索引中某人的完整記憶，可使用 [[LOOKUP_MEMORY: DiscordID]]。"
+        )
+
     def get_permanent_memory(self) -> str:
         facts = self.permanent_data.get("facts", [])
         if not facts:

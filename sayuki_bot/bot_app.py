@@ -133,6 +133,30 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
 
         return targets
 
+    def _collect_relevant_memory_user_ids(
+        primary_user_id: int | str,
+        messages: list[discord.Message],
+        bot_user_id: int,
+        extra_messages: list[discord.Message] | None = None,
+    ) -> set[str]:
+        user_ids = {str(primary_user_id)}
+        for msg in [*messages, *(extra_messages or [])]:
+            author_id = getattr(getattr(msg, "author", None), "id", None)
+            if author_id and author_id != bot_user_id:
+                user_ids.add(str(author_id))
+
+            for mentioned in getattr(msg, "mentions", []):
+                if mentioned.id != bot_user_id:
+                    user_ids.add(str(mentioned.id))
+
+            reference = getattr(msg, "reference", None)
+            resolved = getattr(reference, "resolved", None) if reference else None
+            resolved_author_id = getattr(getattr(resolved, "author", None), "id", None)
+            if resolved_author_id and resolved_author_id != bot_user_id:
+                user_ids.add(str(resolved_author_id))
+
+        return user_ids
+
     async def _remember_developers() -> None:
         for user_id in settings.developer_user_ids:
             await memory_manager.add_memory(
@@ -160,6 +184,13 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         cached_msgs = history_msgs
         reference_text = "\n".join(msg.content for msg in history_msgs[-settings.history_limit:])
         discord_refs = await resolve_discord_references(bot, current_message, reference_text)
+        relevant_memory_user_ids = _collect_relevant_memory_user_ids(
+            interaction.user.id,
+            history_msgs,
+            bot_user_id,
+            list(discord_refs.reply_targets.values()),
+        )
+        memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
         scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
         chat_history = build_chat_history(
             history_msgs,
@@ -174,7 +205,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             interaction.user.display_name,
             interaction.user.id,
             "系統讓你主動查看目前頻道",
-            memory_manager.get_all_memory(),
+            memory_context,
             memory_manager.get_permanent_memory(),
             short_memory_manager.build_context(interaction.channel.id, interaction.user.id),
             chat_history,
@@ -432,6 +463,14 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             )
 
             history_msgs = cached_msgs[-settings.history_limit:]
+            discord_refs = await resolve_discord_references(bot, message, message.content)
+            relevant_memory_user_ids = _collect_relevant_memory_user_ids(
+                message.author.id,
+                history_msgs,
+                bot_user_id,
+                list(discord_refs.reply_targets.values()),
+            )
+            memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
             scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
             chat_history = build_chat_history(
                 history_msgs,
@@ -447,7 +486,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 user_name,
                 message.author.id,
                 attention_reason,
-                memory_manager.get_all_memory(),
+                memory_context,
                 memory_manager.get_permanent_memory(),
                 short_memory_manager.build_context(message.channel.id, message.author.id),
                 chat_history,
@@ -460,7 +499,6 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             if current_attachment:
                 msg_content = f"{msg_content} {current_attachment}"
             log_message = msg_content
-            discord_refs = await resolve_discord_references(bot, message, message.content)
             if discord_refs.context:
                 msg_content = f"{msg_content}\n\n【Discord標記解析】\n{discord_refs.context}"
 

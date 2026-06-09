@@ -131,6 +131,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `[[MEM_SET: user_id | field | content]]`
 - `[[MEM_EVENT_FOR: user_id | YYYY-MM-DD | type | source | content]]`
 - `[[USER_STATS: user_id]]`
+- `[[LOOKUP_MEMORY: user_id]]`
 - `[[STATUS: text]]`
 
 完整工具列表請看 `SYSTEM_PROMPT.example.txt`。
@@ -162,6 +163,8 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `logs/conversation.jsonl`
 
 `memory.json` 使用結構化使用者 profile，可放單一 profile、profile 陣列，或 `{ "user_id": profile }` 形式。
+
+執行時只會完整附送目前情境相關使用者的記憶，例如目前對話者、近期頻道參與者、被提及的人、回覆目標，以及訊息連結解析出的作者。其他使用者只會附成精簡索引，模型需要時可用 `[[LOOKUP_MEMORY: user_id]]` 查完整 profile。
 
 `short_term_memory.json` 儲存會過期的頻道摘要，以及近期使用者與 bot 的互動摘要。這能讓 bot 理解正在發生的事，但不會把跨頻道原文全部塞進上下文。
 

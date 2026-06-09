@@ -31,9 +31,10 @@ RESPONSE_CONTROL_RE = re.compile(r"(\[\[SPLIT(?:-WAIT)?\]\]|\[\[REPLY_TO:\s*#?ms
 PING_TAG_RE = re.compile(r"\[\[PING:\s*(\d+)\s*\]\]")
 CHECK_ROLES_RE = re.compile(r"\[\[CHECK_ROLES:\s*(\d+)\s*\]\]")
 USER_STATS_RE = re.compile(r"\[\[USER_STATS:\s*(\d+)\s*\]\]")
+LOOKUP_MEMORY_RE = re.compile(r"\[\[LOOKUP_MEMORY:\s*(\d+)\s*\]\]")
 VIEW_IMAGE_RE = re.compile(r"\[\[VIEW_IMAGE:\s*#?(msg_\d{1,})\s*\]\]")
 QUERY_TOOL_RE = re.compile(
-    r"\[\[(?:VIEW_IMAGE:\s*#?msg_\d{1,}|CHECK_ROLES:\s*\d+|USER_STATS:\s*\d+)\s*\]\]",
+    r"\[\[(?:VIEW_IMAGE:\s*#?msg_\d{1,}|CHECK_ROLES:\s*\d+|USER_STATS:\s*\d+|LOOKUP_MEMORY:\s*\d+)\s*\]\]",
     flags=re.DOTALL,
 )
 STATUS_RE = re.compile(r"\[\[STATUS:\s*(.*?)\s*\]\]", flags=re.DOTALL)
@@ -666,6 +667,42 @@ class Scheduler:
 
         return "【系統使用者統計查詢結果】\n" + "\n\n".join(reports)
 
+    async def _build_memory_lookup_tool_report(
+        self,
+        raw_response: str,
+        tool_events: list[str] | None = None,
+    ) -> str:
+        matches = LOOKUP_MEMORY_RE.findall(raw_response)
+        if not matches:
+            return ""
+
+        seen_users: set[str] = set()
+        reports = []
+        for user_id in matches:
+            started = perf_counter()
+            if user_id in seen_users:
+                continue
+            seen_users.add(user_id)
+            if tool_events is not None:
+                tool_events.append(f"LOOKUP_MEMORY {user_id}")
+
+            memory_text = self.memory_mgr.get_formatted_memory(user_id=user_id)
+            if memory_text == "無":
+                reports.append(f"用戶ID {user_id}: 找不到完整記憶。")
+                success = False
+            else:
+                reports.append(f"用戶ID {user_id} 的完整記憶:\n{memory_text}")
+                success = True
+
+            if self.tool_stats_mgr:
+                await self.tool_stats_mgr.record_tool(
+                    "LOOKUP_MEMORY",
+                    (perf_counter() - started) * 1000,
+                    success,
+                )
+
+        return "【系統完整記憶查詢結果】\n" + "\n\n".join(reports)
+
     async def _run_query_tools_once(
         self,
         raw_response: str,
@@ -683,6 +720,7 @@ class Scheduler:
                 await self._build_image_tool_report(raw_response, req, tool_events),
                 await self._build_roles_tool_report(raw_response, interaction_obj, tool_events),
                 await self._build_user_stats_tool_report(raw_response, tool_events),
+                await self._build_memory_lookup_tool_report(raw_response, tool_events),
             ]
             filtered_reports = [report for report in reports if report]
             if debug_record is not None and filtered_reports:

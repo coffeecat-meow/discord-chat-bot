@@ -40,6 +40,7 @@ If you need to perform an action, include one of these tags in your response. Th
 - View an image from a recent message: [[VIEW_IMAGE: #msg_1234]]
 - Check a member's roles: [[CHECK_ROLES: user ID]]
 - Check user interaction statistics: [[USER_STATS: user ID]]
+- Look up a full user memory profile when only the memory index is attached: [[LOOKUP_MEMORY: user ID]]
 - Set the bot presence for 30 minutes: [[STATUS: activity or mood text]]
 - Schedule a reminder: [[REMIND: minutes | reminder content]]
 - Create an interactive button prompt: [[BUTTON_UI: title | description | option1, option2...]]

@@ -220,7 +220,7 @@ def build_system_context(
     user_name: str,
     user_id: int,
     attention_reason: str,
-    all_memory: str,
+    memory_context: str,
     permanent_memory: str,
     short_term_context: str,
     chat_history: str,
@@ -235,7 +235,9 @@ def build_system_context(
         "提醒：user_name 是顯示名稱，工具標記需要使用純數字 Discord ID。\n\n"
         "提醒：Discord頻道標記 `<#頻道ID>`、Discord訊息連結會在「Discord標記解析」區塊轉成可讀資訊；"
         "若訊息連結解析成功，可使用該區塊提供的 #msg_xxxx 指定回覆或查看圖片。\n\n"
-        f"[所有使用者記憶]\n{all_memory}\n\n"
+        "提醒：記憶區只會完整附上目前對話相關的人，其他人只列索引；"
+        "如果索引中的某人和當前話題明顯有關，可使用 [[LOOKUP_MEMORY: DiscordID]] 查完整記憶。\n\n"
+        f"[相關使用者記憶與索引]\n{memory_context}\n\n"
         f"[你的永久記憶]\n{permanent_memory}\n\n"
         f"[短期上下文摘要]\n{short_term_context}\n\n"
         f"[近期群組對話]\n{chat_history}"

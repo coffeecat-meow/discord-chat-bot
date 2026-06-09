@@ -131,6 +131,7 @@ The model can emit hidden tool tags such as:
 - `[[MEM_SET: user_id | field | content]]`
 - `[[MEM_EVENT_FOR: user_id | YYYY-MM-DD | type | source | content]]`
 - `[[USER_STATS: user_id]]`
+- `[[LOOKUP_MEMORY: user_id]]`
 - `[[STATUS: text]]`
 
 See `SYSTEM_PROMPT.example.txt` for the full tool list.
@@ -162,6 +163,8 @@ Runtime files are ignored by git:
 - `logs/conversation.jsonl`
 
 `memory.json` stores structured user profiles. It can be a single profile, a list of profiles, or a mapping of `{ "user_id": profile }`.
+
+At runtime, the bot injects full memory only for users related to the current context, such as the current speaker, recent channel participants, mentioned users, reply targets, and resolved message-link authors. Other profiles are injected as a compact index, and the model can request a full profile with `[[LOOKUP_MEMORY: user_id]]`.
 
 `short_term_memory.json` stores expiring channel summaries and recent user-bot interaction summaries. These summaries help the bot understand ongoing context without injecting raw cross-channel message history.
 
