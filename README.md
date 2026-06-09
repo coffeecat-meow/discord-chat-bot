@@ -67,6 +67,8 @@ BOT_TOKEN=
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=google/gemma-2-9b-it:free
 OPENROUTER_VL_MODEL=nvidia/nemotron-nano-12b-v2-vl:free
+OPENROUTER_USE_REASONING_EFFORT=false
+OPENROUTER_REASONING_EFFORT=medium
 ADMIN_USER_IDS=123456789012345678
 DEVELOPER_USER_IDS=123456789012345678
 ```
@@ -97,6 +99,8 @@ TOOL_STATS_FILE=tool_stats.json
 OBSCURA_BIN=./obscura-aarch64-macos/obscura
 MAX_MEMORY_CONTEXT_CHARS=120000
 ```
+
+`OPENROUTER_USE_REASONING_EFFORT=true` sends `reasoning.effort` to the text model only. Leave it `false` for models that do not support reasoning effort. `OPENROUTER_REASONING_EFFORT` is usually `low`, `medium`, or `high`.
 
 ## Web Search
 

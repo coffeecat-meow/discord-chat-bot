@@ -56,6 +56,8 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         settings.openrouter_model,
         settings.openrouter_vl_model,
         tool_stats_manager,
+        settings.openrouter_use_reasoning_effort,
+        settings.openrouter_reasoning_effort,
     )
     memory_manager = MemoryManager(settings.memory_db_file, settings.permanent_memory_db_file)
     user_stats_manager = UserStatsManager(settings.user_stats_file)

@@ -19,6 +19,8 @@ class Settings:
     openrouter_api_key: str | None
     openrouter_model: str
     openrouter_vl_model: str
+    openrouter_use_reasoning_effort: bool
+    openrouter_reasoning_effort: str
     temp_dir: str
     max_queue_size: int
     history_limit: int
@@ -61,6 +63,21 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on", "是", "啟用"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off", "否", "停用"}:
+        return False
+
+    logging.getLogger(__name__).warning("%s 必須是布林值，已使用預設值 %s", name, default)
+    return default
+
+
 def _env_path(name: str, default: Path) -> Path:
     raw_value = os.getenv(name)
     path = Path(raw_value) if raw_value else default
@@ -93,6 +110,8 @@ def load_settings() -> Settings:
             "OPENROUTER_VL_MODEL",
             "nvidia/nemotron-nano-12b-v2-vl:free",
         ),
+        openrouter_use_reasoning_effort=_env_bool("OPENROUTER_USE_REASONING_EFFORT", False),
+        openrouter_reasoning_effort=os.getenv("OPENROUTER_REASONING_EFFORT", "medium").strip(),
         temp_dir=os.getenv("TEMP_DIR", "./temp"),
         max_queue_size=_env_int("MAX_QUEUE_SIZE", 5),
         history_limit=_env_int("HISTORY_LIMIT", 25),

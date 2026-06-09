@@ -42,7 +42,15 @@ def _message_without_match(reply: str, match: re.Match[str]) -> str:
 
 
 class OpenRouterLLM:
-    def __init__(self, api_key: str, model: str, vl_model: str, tool_stats_mgr=None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        vl_model: str,
+        tool_stats_mgr=None,
+        use_reasoning_effort: bool = False,
+        reasoning_effort: str = "medium",
+    ):
         self.client = AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
@@ -54,6 +62,14 @@ class OpenRouterLLM:
         self.model = model
         self.vl_model = vl_model
         self.tool_stats_mgr = tool_stats_mgr
+        self.use_reasoning_effort = use_reasoning_effort
+        self.reasoning_effort = reasoning_effort.strip().lower()
+
+    def _text_reasoning_kwargs(self) -> dict:
+        if not self.use_reasoning_effort or not self.reasoning_effort:
+            return {}
+
+        return {"reasoning": {"effort": self.reasoning_effort}}
 
     async def describe_image_async(self, image_url: str) -> str:
         messages = [
@@ -111,6 +127,7 @@ class OpenRouterLLM:
                 messages=messages,
                 max_tokens=2048,
                 temperature=0.1,
+                **self._text_reasoning_kwargs(),
             )
             processed = resp.choices[0].message.content
             return processed.strip() if processed else "資料處理器沒有整理出可用內容。"
@@ -136,6 +153,7 @@ class OpenRouterLLM:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.1,
+                **self._text_reasoning_kwargs(),
             )
             summary = resp.choices[0].message.content
             return summary.strip() if summary else "無"
@@ -151,6 +169,7 @@ class OpenRouterLLM:
                     messages=messages,
                     max_tokens=8192,
                     temperature=0.65,
+                    **self._text_reasoning_kwargs(),
                 )
                 raw_content = resp.choices[0].message.content
 
