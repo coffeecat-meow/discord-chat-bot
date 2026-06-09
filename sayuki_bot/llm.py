@@ -29,6 +29,7 @@ class OpenRouterLLM:
         self,
         api_key: str,
         model: str,
+        small_model: str,
         vl_model: str,
         tool_stats_mgr=None,
         use_reasoning_effort: bool = False,
@@ -43,6 +44,7 @@ class OpenRouterLLM:
             },
         )
         self.model = model
+        self.small_model = small_model or model
         self.vl_model = vl_model
         self.tool_stats_mgr = tool_stats_mgr
         self.use_reasoning_effort = use_reasoning_effort
@@ -132,7 +134,7 @@ class OpenRouterLLM:
 
         try:
             resp = await self.client.chat.completions.create(
-                model=self.model,
+                model=self.small_model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.1,

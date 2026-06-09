@@ -54,6 +54,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
     llm_engine = OpenRouterLLM(
         settings.openrouter_api_key,
         settings.openrouter_model,
+        settings.openrouter_small_model,
         settings.openrouter_vl_model,
         tool_stats_manager,
         settings.openrouter_use_reasoning_effort,

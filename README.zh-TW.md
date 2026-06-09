@@ -66,6 +66,7 @@ cp SYSTEM_PROMPT.example.txt SYSTEM_PROMPT.txt
 BOT_TOKEN=
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=google/gemma-2-9b-it:free
+OPENROUTER_SMALL_MODEL=google/gemma-2-9b-it:free
 OPENROUTER_VL_MODEL=nvidia/nemotron-nano-12b-v2-vl:free
 OPENROUTER_USE_REASONING_EFFORT=false
 OPENROUTER_REASONING_EFFORT=medium
@@ -101,6 +102,8 @@ MAX_MEMORY_CONTEXT_CHARS=120000
 ```
 
 `OPENROUTER_USE_REASONING_EFFORT=true` 時，只會對文字模型送出 `reasoning.effort`，VL模型不會套用。若模型不支援effort level，請維持 `false`。`OPENROUTER_REASONING_EFFORT` 通常可填 `low`、`medium`、`high`。
+
+`OPENROUTER_SMALL_MODEL` 用於短期記憶摘要。若未設定，會沿用 `OPENROUTER_MODEL`。
 
 ## 網頁搜尋
 

@@ -18,6 +18,7 @@ class Settings:
     token: str | None
     openrouter_api_key: str | None
     openrouter_model: str
+    openrouter_small_model: str
     openrouter_vl_model: str
     openrouter_use_reasoning_effort: bool
     openrouter_reasoning_effort: str
@@ -106,6 +107,10 @@ def load_settings() -> Settings:
         token=os.getenv("BOT_TOKEN"),
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
         openrouter_model=os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free"),
+        openrouter_small_model=os.getenv(
+            "OPENROUTER_SMALL_MODEL",
+            os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free"),
+        ),
         openrouter_vl_model=os.getenv(
             "OPENROUTER_VL_MODEL",
             "nvidia/nemotron-nano-12b-v2-vl:free",
