@@ -184,9 +184,9 @@ class ShortTermMemoryManager:
             f"舊摘要：{previous or '無'}\n\n"
             f"近期訊息：\n{transcript}\n\n"
             "請壓縮成短期頻道摘要，保留目前話題、參與者、未解問題、情緒氛圍。"
-            "不要加入未出現在訊息中的推測。請用繁體中文，500字內。"
+            "不要加入未出現在訊息中的推測。請用繁體中文，最多6點，250字內。只輸出摘要內容。"
         )
-        summary = await llm.summarize_async(prompt, max_tokens=900)
+        summary = await llm.summarize_async(prompt, max_tokens=360)
         self.data.setdefault("channels", {})[channel_id] = {
             "summary": _trim(summary, self.max_context_chars),
             "updated_at": _now_iso(),
@@ -225,9 +225,9 @@ class ShortTermMemoryManager:
             f"本次互動前後文：\n{_trim(interaction_context, self.max_context_chars)}\n\n"
             f"bot回覆：\n{_trim(bot_response, self.max_context_chars)}\n\n"
             "請更新此使用者與bot的短期互動摘要。保留最近正在延續的話題、bot問過的問題、"
-            "使用者可能期待bot接續的內容。不要寫永久個資。請用繁體中文，400字內。"
+            "使用者可能期待bot接續的內容。不要寫永久個資。請用繁體中文，最多4點，180字內。只輸出摘要內容。"
         )
-        summary = await llm.summarize_async(prompt, max_tokens=700)
+        summary = await llm.summarize_async(prompt, max_tokens=240)
         self.data.setdefault("users", {})[user_id] = {
             "summary": _trim(summary, self.max_context_chars),
             "updated_at": _now_iso(),

@@ -118,7 +118,7 @@ class OpenRouterLLM:
             logger.error("搜尋資料處理器錯誤: %s", exc)
             return f"資料處理器整理失敗：{exc}\n\n{scan.raw_text[:2000]}"
 
-    async def summarize_async(self, prompt: str, max_tokens: int = 900) -> str:
+    async def summarize_async(self, prompt: str, max_tokens: int = 300, use_reasoning_effort: bool = False) -> str:
         messages = [
             {
                 "role": "system",
@@ -136,7 +136,7 @@ class OpenRouterLLM:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.1,
-                **self._text_reasoning_kwargs(),
+                **(self._text_reasoning_kwargs() if use_reasoning_effort else {}),
             )
             summary = resp.choices[0].message.content
             return summary.strip() if summary else "無"
