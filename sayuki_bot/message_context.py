@@ -178,6 +178,11 @@ def build_chat_history(
         else:
             attachment_info = get_attachment_info(msg)
             if attachment_info:
+                if any(
+                    attachment.content_type and attachment.content_type.startswith("image/")
+                    for attachment in msg.attachments
+                ):
+                    attachment_info += f" 可用 [[VIEW_IMAGE: #msg_{msg_short_id}]] 查看圖片內容"
                 attachment_info = f" {attachment_info}"
 
         content = f"{reply_marker}{content}{attachment_info}"
@@ -217,6 +222,7 @@ def build_system_context(
     attention_reason: str,
     all_memory: str,
     permanent_memory: str,
+    short_term_context: str,
     chat_history: str,
     stats: BotStats,
     is_proactive: bool,
@@ -227,8 +233,11 @@ def build_system_context(
         f"目前對話者: {user_name} (Discord ID:{user_id})\n"
         f"本次觸發原因: {attention_reason}\n"
         "提醒：user_name 是顯示名稱，工具標記需要使用純數字 Discord ID。\n\n"
+        "提醒：Discord頻道標記 `<#頻道ID>`、Discord訊息連結會在「Discord標記解析」區塊轉成可讀資訊；"
+        "若訊息連結解析成功，可使用該區塊提供的 #msg_xxxx 指定回覆或查看圖片。\n\n"
         f"[所有使用者記憶]\n{all_memory}\n\n"
         f"[你的永久記憶]\n{permanent_memory}\n\n"
+        f"[短期上下文摘要]\n{short_term_context}\n\n"
         f"[近期群組對話]\n{chat_history}"
     )
 

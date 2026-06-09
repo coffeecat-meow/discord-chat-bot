@@ -15,6 +15,7 @@ This project provides a modular Python bot with conversation memory, image analy
 - Proactive channel watching
 - Split-message delivery with simulated typing
 - Reply targeting for recent messages
+- Discord channel tags and message links are resolved into readable context
 - Obscura-powered browser search
 - Math calculation, function plotting, and LaTeX rendering
 - Reactions, reminders, role checks, user timeouts, presence updates, and button UI
@@ -83,6 +84,16 @@ ECHO_MIN_USERS=3
 SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.txt
 MEMORY_DB_FILE=memory.json
 PERMANENT_MEMORY_DB_FILE=permanent_memory.json
+USER_STATS_FILE=user_stats.json
+SHORT_MEMORY_FILE=short_term_memory.json
+SHORT_MEMORY_TTL_SECONDS=21600
+SHORT_MEMORY_TRIGGER_MESSAGES=40
+SHORT_MEMORY_MIN_INTERVAL_SECONDS=600
+SHORT_MEMORY_MAX_CONTEXT_CHARS=5000
+IMAGE_CACHE_TTL_SECONDS=21600
+IMAGE_CACHE_MAX_ITEMS=500
+CONVERSATION_LOG_FILE=logs/conversation.jsonl
+TOOL_STATS_FILE=tool_stats.json
 OBSCURA_BIN=./obscura-aarch64-macos/obscura
 MAX_MEMORY_CONTEXT_CHARS=120000
 ```
@@ -107,8 +118,12 @@ The model can emit hidden tool tags such as:
 - `[[SPLIT]]` / `[[SPLIT-WAIT]]`
 - `[[REMIND: minutes | content]]`
 - `[[BUTTON_UI: title | description | option1, option2]]`
+- `[[POLL: title | minutes | multiple | option1, option2]]`
+- `[[VIEW_IMAGE: #msg_1234]]`
 - `[[MATH_CALC: expression]]`
 - `[[MEM_SET: user_id | field | content]]`
+- `[[MEM_EVENT_FOR: user_id | YYYY-MM-DD | type | source | content]]`
+- `[[USER_STATS: user_id]]`
 - `[[STATUS: text]]`
 
 See `SYSTEM_PROMPT.example.txt` for the full tool list.
@@ -120,10 +135,13 @@ Only Discord user IDs listed in `ADMIN_USER_IDS` can use these commands. Command
 - `/sayuki_look [note]` - ask the bot to proactively inspect the current channel
 - `/sayuki_interrupt` - clear queued requests and stop unsent split output
 - `/sayuki_status` - show queue and message stats
+- `/sayuki_tool_stats` - inspect tool calls, failures, and average durations
+- `/sayuki_debug_last` - show the latest processing/debug summary
 - `/sayuki_clear_status` - clear the bot presence
 - `/sayuki_reload_prompt` - reload `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id` - inspect a user's memory
 - `/sayuki_memory_permanent` - inspect permanent bot memory
+- `/sayuki_user_stats user_id` - inspect user interaction statistics
 
 ## Memory Files
 
@@ -131,8 +149,20 @@ Runtime files are ignored by git:
 
 - `memory.json`
 - `permanent_memory.json`
+- `short_term_memory.json`
+- `user_stats.json`
+- `tool_stats.json`
+- `logs/conversation.jsonl`
 
 `memory.json` stores structured user profiles. It can be a single profile, a list of profiles, or a mapping of `{ "user_id": profile }`.
+
+`short_term_memory.json` stores expiring channel summaries and recent user-bot interaction summaries. These summaries help the bot understand ongoing context without injecting raw cross-channel message history.
+
+`user_stats.json` stores lightweight interaction counters such as messages seen, bot triggers, bot replies, last interaction times, and channel-level counts.
+
+`tool_stats.json` stores persistent tool usage counters for today, current month, and all time, including failures and average duration.
+
+`logs/conversation.jsonl` stores lightweight conversation records only: timestamps, channel/user identifiers, trigger reason, user message text, bot response text, and query tool usage. It does not store the full prompt or full injected context.
 
 ## Running
 
@@ -156,5 +186,7 @@ These files are intentionally ignored:
 - `README.private.md`
 - `memory.json`
 - `permanent_memory.json`
+- `tool_stats.json`
+- `logs/`
 - `obscura*`
 - virtualenvs, caches, and temporary files

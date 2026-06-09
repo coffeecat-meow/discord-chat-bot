@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from openai import AsyncOpenAI
 
@@ -17,6 +18,7 @@ MEMORY_SIDE_EFFECT_PATTERNS = [
     r"\[\[MEM_HOBBY:.*?\]\]",
     r"\[\[MEM_GOSSIP:.*?\]\]",
     r"\[\[MEM_EVENT:.*?\]\]",
+    r"\[\[MEM_EVENT_FOR:.*?\]\]",
     r"\[\[MEMORY:.*?\]\]",
     r"\[\[EDIT_MEMORY:.*?\]\]",
     r"\[\[DELETE_MEMORY:.*?\]\]",
@@ -40,7 +42,7 @@ def _message_without_match(reply: str, match: re.Match[str]) -> str:
 
 
 class OpenRouterLLM:
-    def __init__(self, api_key: str, model: str, vl_model: str):
+    def __init__(self, api_key: str, model: str, vl_model: str, tool_stats_mgr=None):
         self.client = AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
@@ -51,6 +53,7 @@ class OpenRouterLLM:
         )
         self.model = model
         self.vl_model = vl_model
+        self.tool_stats_mgr = tool_stats_mgr
 
     async def describe_image_async(self, image_url: str) -> str:
         messages = [
@@ -115,6 +118,31 @@ class OpenRouterLLM:
             logger.error("搜尋資料處理器錯誤: %s", exc)
             return f"資料處理器整理失敗：{exc}\n\n{scan.raw_text[:2000]}"
 
+    async def summarize_async(self, prompt: str, max_tokens: int = 900) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一個短期記憶壓縮器。請客觀整理提供的聊天內容，"
+                    "保留有助於後續對話理解的重點，不要模仿角色語氣。"
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            resp = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.1,
+            )
+            summary = resp.choices[0].message.content
+            return summary.strip() if summary else "無"
+        except Exception as exc:
+            logger.error("短期記憶壓縮失敗: %s", exc)
+            return "短期記憶壓縮失敗。"
+
     async def generate_async(self, messages: list, max_search: int = 2) -> str:
         for iteration in range(max_search):
             try:
@@ -137,7 +165,14 @@ class OpenRouterLLM:
                 if calc_match:
                     expr = calc_match.group(1).strip()
                     logger.info("執行數學計算: %s", expr)
+                    started = time.perf_counter()
                     result = await math_tools.MathToolkit.calculate(expr)
+                    if self.tool_stats_mgr:
+                        await self.tool_stats_mgr.record_tool(
+                            "MATH_CALC",
+                            (time.perf_counter() - started) * 1000,
+                            not result.startswith("計算錯誤"),
+                        )
 
                     content_to_keep = _message_without_match(reply, calc_match)
                     if content_to_keep:
@@ -170,8 +205,21 @@ class OpenRouterLLM:
                     if content_to_keep:
                         messages.append({"role": "assistant", "content": content_to_keep})
 
+                    started = time.perf_counter()
                     scan = await search_web(query)
                     processed_result = await self._process_browser_scan_async(scan)
+                    if self.tool_stats_mgr:
+                        search_success = (
+                            scan.scanned_pages > 0
+                            and not scan.raw_text.startswith("搜尋功能未啟用")
+                            and not scan.raw_text.startswith("搜尋發生錯誤")
+                            and not processed_result.startswith("資料處理器整理失敗")
+                        )
+                        await self.tool_stats_mgr.record_tool(
+                            "SEARCH",
+                            (time.perf_counter() - started) * 1000,
+                            search_success,
+                        )
                     messages.append(
                         {
                             "role": "user",

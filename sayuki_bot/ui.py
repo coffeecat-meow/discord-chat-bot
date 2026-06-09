@@ -64,6 +64,13 @@ class InteractiveAskView(discord.ui.View):
             new_messages.append({"role": "user", "content": f"（點擊了按鈕：{option}）"})
 
             new_req = Request(new_messages, interaction, is_proactive=True)
+            new_req.target_user_id = interaction.user.id
+            new_req.target_user_name = interaction.user.display_name
+            new_req.target_channel_id = interaction.channel.id if interaction.channel else None
+            new_req.target_channel_name = getattr(interaction.channel, "name", str(getattr(interaction.channel, "id", "")))
+            new_req.trigger_message_id = interaction.message.id if interaction.message else None
+            new_req.attention_reason = "互動按鈕回覆"
+            new_req.original_message = f"互動按鈕選擇：{option}"
             await self.scheduler.add_request(new_req)
 
         return callback

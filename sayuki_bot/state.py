@@ -28,5 +28,6 @@ class BotState:
     stats: BotStats = field(default_factory=BotStats)
     channel_message_cache: dict[str, deque] = field(default_factory=dict)
     vl_description_cache: dict[int, str] = field(default_factory=dict)
+    vl_description_cache_times: dict[int, datetime] = field(default_factory=dict)
     proactive_cooldowns: dict[int, datetime] = field(default_factory=dict)
     echoed_messages: dict[str, dict[str, datetime]] = field(default_factory=dict)

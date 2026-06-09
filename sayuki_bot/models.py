@@ -13,7 +13,17 @@ class Request:
     is_proactive: bool = False
     prefix_text: str = ""
     reply_targets: dict[str, Any] = field(default_factory=dict)
+    image_targets: dict[str, list[str]] = field(default_factory=dict)
+    image_target_message_ids: dict[str, int] = field(default_factory=dict)
+    image_description_cache: dict[int, str] = field(default_factory=dict)
+    image_description_cache_times: dict[int, Any] = field(default_factory=dict)
     user_name: str = ""
+    target_user_id: int | None = None
+    target_user_name: str = ""
+    target_channel_id: int | None = None
+    target_channel_name: str = ""
+    trigger_message_id: int | None = None
+    attention_reason: str = ""
     original_message: str = ""
     is_interaction: bool = field(init=False)
 

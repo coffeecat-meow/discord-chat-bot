@@ -273,6 +273,8 @@ class MemoryManager:
         event_type: str = "事實/動態",
         date: str | None = None,
         user_name: str | None = None,
+        source: str | None = None,
+        recorded_at: str | None = None,
     ) -> bool:
         profile = self._ensure_user(user_id, user_name)
         event = event.strip()
@@ -284,6 +286,11 @@ class MemoryManager:
             "event": event,
             "type": (event_type or "事實/動態").strip(),
         }
+        if source:
+            memory_event["source"] = source.strip()
+        if recorded_at:
+            memory_event["recorded_at"] = recorded_at.strip()
+
         if _dedupe_key(memory_event) not in {_dedupe_key(item) for item in profile["important_events"]}:
             profile["important_events"].append(memory_event)
             await self._save_db()

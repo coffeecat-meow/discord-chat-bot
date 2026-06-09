@@ -1,5 +1,5 @@
 aiofiles
-discord.py
+discord.py>=2.4
 matplotlib
 numpy
 openai

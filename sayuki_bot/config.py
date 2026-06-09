@@ -28,6 +28,16 @@ class Settings:
     system_prompt_path: Path
     memory_db_file: str
     permanent_memory_db_file: str
+    user_stats_file: str
+    short_memory_file: str
+    short_memory_ttl_seconds: int
+    short_memory_trigger_messages: int
+    short_memory_min_interval_seconds: int
+    short_memory_max_context_chars: int
+    image_cache_ttl_seconds: int
+    image_cache_max_items: int
+    conversation_log_file: Path
+    tool_stats_file: Path
     admin_user_ids: frozenset[int]
     developer_user_ids: frozenset[int]
 
@@ -92,6 +102,16 @@ def load_settings() -> Settings:
         system_prompt_path=_env_path("SYSTEM_PROMPT_PATH", BASE_DIR / "SYSTEM_PROMPT.txt"),
         memory_db_file=os.getenv("MEMORY_DB_FILE", "memory.json"),
         permanent_memory_db_file=os.getenv("PERMANENT_MEMORY_DB_FILE", "permanent_memory.json"),
+        user_stats_file=os.getenv("USER_STATS_FILE", "user_stats.json"),
+        short_memory_file=os.getenv("SHORT_MEMORY_FILE", "short_term_memory.json"),
+        short_memory_ttl_seconds=_env_int("SHORT_MEMORY_TTL_SECONDS", 21600),
+        short_memory_trigger_messages=_env_int("SHORT_MEMORY_TRIGGER_MESSAGES", 40),
+        short_memory_min_interval_seconds=_env_int("SHORT_MEMORY_MIN_INTERVAL_SECONDS", 600),
+        short_memory_max_context_chars=_env_int("SHORT_MEMORY_MAX_CONTEXT_CHARS", 5000),
+        image_cache_ttl_seconds=_env_int("IMAGE_CACHE_TTL_SECONDS", 21600),
+        image_cache_max_items=_env_int("IMAGE_CACHE_MAX_ITEMS", 500),
+        conversation_log_file=_env_path("CONVERSATION_LOG_FILE", BASE_DIR / "logs" / "conversation.jsonl"),
+        tool_stats_file=_env_path("TOOL_STATS_FILE", BASE_DIR / "tool_stats.json"),
         admin_user_ids=_env_id_set("ADMIN_USER_IDS"),
         developer_user_ids=_env_id_set("DEVELOPER_USER_IDS"),
     )
