@@ -70,9 +70,9 @@ def _normalize_memory_date(date_text: str) -> str:
 
 def _build_opencc_converter():
     try:
-        return opencc.OpenCC("s2t")
+        return opencc.OpenCC("s2tw")
     except Exception:
-        return opencc.OpenCC("s2t.json")
+        return opencc.OpenCC("s2tw.json")
 
 
 def _preview_text(text: str, limit: int = 240) -> str:
