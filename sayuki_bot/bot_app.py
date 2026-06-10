@@ -263,7 +263,6 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             state.vl_description_cache,
         )
         sys_info = build_system_context(
-            bot.sayuki.system_prompt,
             interaction.user.display_name,
             interaction.user.id,
             "系統讓你主動查看目前頻道",
@@ -274,7 +273,10 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             state.stats,
             True,
         )
-        msg_list = [{"role": "system", "content": sys_info}]
+        msg_list = [
+            {"role": "system", "content": bot.sayuki.system_prompt},
+            {"role": "system", "content": sys_info},
+        ]
         note_text = f"\n補充訊息：{note.strip()}" if note and note.strip() else ""
         reference_text = f"\n\n【Discord標記解析】\n{discord_refs.context}" if discord_refs.context else ""
         msg_list.append(
@@ -576,7 +578,6 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             )
 
             sys_info = build_system_context(
-                bot.sayuki.system_prompt,
                 user_name,
                 message.author.id,
                 attention_reason,
@@ -596,7 +597,10 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             if discord_refs.context:
                 msg_content = f"{msg_content}\n\n【Discord標記解析】\n{discord_refs.context}"
 
-            msg_list = [{"role": "system", "content": sys_info}]
+            msg_list = [
+                {"role": "system", "content": bot.sayuki.system_prompt},
+                {"role": "system", "content": sys_info},
+            ]
             msg_list.append({"role": "user", "content": msg_content})
 
             reply_targets = {f"msg_{str(msg.id)[-4:]}": msg for msg in history_msgs}

@@ -216,7 +216,6 @@ def build_time_context(stats: BotStats) -> str:
 
 
 def build_system_context(
-    system_prompt: str,
     user_name: str,
     user_id: int,
     attention_reason: str,
@@ -228,7 +227,7 @@ def build_system_context(
     is_proactive: bool,
 ) -> str:
     sys_info = (
-        f"{system_prompt}\n\n[系統資訊]\n"
+        "[系統資訊]\n"
         f"{build_time_context(stats)}\n"
         f"目前對話者: {user_name} (Discord ID:{user_id})\n"
         f"本次觸發原因: {attention_reason}\n"
