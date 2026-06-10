@@ -4,6 +4,7 @@ import logging
 import json
 import re
 import tempfile
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,6 +117,15 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             return mention_match.group(1) or mention_match.group(2)
 
         return value if value.isdigit() else None
+
+    @asynccontextmanager
+    async def _typing_for_trigger(message: discord.Message, is_proactive: bool):
+        if is_proactive:
+            yield
+            return
+
+        async with message.channel.typing():
+            yield
 
     def _log_time(event: dict) -> str:
         for key in ("time", "started_at", "recorded_at", "finished_at"):
@@ -543,94 +553,95 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             else:
                 attention_reason = "目前對話者提到你的名字或關鍵字"
 
-            await user_stats_manager.record_trigger(
-                message.author.id,
-                message.author.display_name,
-                message.channel.id,
-                getattr(message.channel, "name", str(message.channel.id)),
-                attention_reason,
-            )
+            async with _typing_for_trigger(message, is_proactive):
+                await user_stats_manager.record_trigger(
+                    message.author.id,
+                    message.author.display_name,
+                    message.channel.id,
+                    getattr(message.channel, "name", str(message.channel.id)),
+                    attention_reason,
+                )
 
-            history_msgs = cached_msgs[-settings.history_limit:]
-            discord_refs = await resolve_discord_references(bot, message, message.content)
-            relevant_memory_user_ids = _collect_relevant_memory_user_ids(
-                message.author.id,
-                history_msgs,
-                bot_user_id,
-                list(discord_refs.reply_targets.values()),
-            )
-            memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
-            await short_memory_manager.digest_pending(
-                llm_engine,
-                message.channel.id,
-                getattr(message.channel, "name", str(message.channel.id)),
-                message.author.id,
-                message.author.display_name,
-            )
-            scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
-            chat_history = build_chat_history(
-                history_msgs,
-                cached_msgs,
-                message,
-                bot_user_id,
-                is_proactive,
-                state.vl_description_cache,
-            )
+                history_msgs = cached_msgs[-settings.history_limit:]
+                discord_refs = await resolve_discord_references(bot, message, message.content)
+                relevant_memory_user_ids = _collect_relevant_memory_user_ids(
+                    message.author.id,
+                    history_msgs,
+                    bot_user_id,
+                    list(discord_refs.reply_targets.values()),
+                )
+                memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
+                await short_memory_manager.digest_pending(
+                    llm_engine,
+                    message.channel.id,
+                    getattr(message.channel, "name", str(message.channel.id)),
+                    message.author.id,
+                    message.author.display_name,
+                )
+                scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
+                chat_history = build_chat_history(
+                    history_msgs,
+                    cached_msgs,
+                    message,
+                    bot_user_id,
+                    is_proactive,
+                    state.vl_description_cache,
+                )
 
-            sys_info = build_system_context(
-                user_name,
-                message.author.id,
-                attention_reason,
-                memory_context,
-                memory_manager.get_permanent_memory(),
-                short_memory_manager.build_context(message.channel.id, message.author.id),
-                chat_history,
-                state.stats,
-                is_proactive,
-            )
+                sys_info = build_system_context(
+                    user_name,
+                    message.author.id,
+                    attention_reason,
+                    memory_context,
+                    memory_manager.get_permanent_memory(),
+                    short_memory_manager.build_context(message.channel.id, message.author.id),
+                    chat_history,
+                    state.stats,
+                    is_proactive,
+                )
 
-            msg_content = message.content
-            current_attachment = get_attachment_info(message)
-            if current_attachment:
-                msg_content = f"{msg_content} {current_attachment}"
-            log_message = msg_content
-            if discord_refs.context:
-                msg_content = f"{msg_content}\n\n【Discord標記解析】\n{discord_refs.context}"
+                msg_content = message.content
+                current_attachment = get_attachment_info(message)
+                if current_attachment:
+                    msg_content = f"{msg_content} {current_attachment}"
+                log_message = msg_content
+                if discord_refs.context:
+                    msg_content = f"{msg_content}\n\n【Discord標記解析】\n{discord_refs.context}"
 
-            msg_list = [
-                {"role": "system", "content": bot.sayuki.system_prompt},
-                {"role": "system", "content": sys_info},
-            ]
-            msg_list.append({"role": "user", "content": msg_content})
+                msg_list = [
+                    {"role": "system", "content": bot.sayuki.system_prompt},
+                    {"role": "system", "content": sys_info},
+                ]
+                msg_list.append({"role": "user", "content": msg_content})
 
-            reply_targets = {f"msg_{str(msg.id)[-4:]}": msg for msg in history_msgs}
-            reply_targets.update(discord_refs.reply_targets)
-            image_targets = _collect_image_targets(history_msgs)
-            image_targets.update(discord_refs.image_targets)
-            image_target_message_ids = _collect_image_target_message_ids(history_msgs)
-            image_target_message_ids.update(discord_refs.image_target_message_ids)
-            req = Request(
-                msg_list,
-                message,
-                is_proactive,
-                reply_targets=reply_targets,
-                image_targets=image_targets,
-                image_target_message_ids=image_target_message_ids,
-                image_description_cache=state.vl_description_cache,
-                image_description_cache_times=state.vl_description_cache_times,
-            )
-            req.target_user_id = message.author.id
-            req.target_user_name = message.author.display_name
-            req.target_channel_id = message.channel.id
-            req.target_channel_name = getattr(message.channel, "name", str(message.channel.id))
-            req.trigger_message_id = message.id
-            req.attention_reason = attention_reason
-            req.original_message = log_message
-            if not await scheduler.add_request(req):
-                try:
-                    await message.reply("腦袋快過載了，請等我一下下...", mention_author=False)
-                except Exception:
-                    await message.channel.send("（系統忙碌中）")
+                reply_targets = {f"msg_{str(msg.id)[-4:]}": msg for msg in history_msgs}
+                reply_targets.update(discord_refs.reply_targets)
+                image_targets = _collect_image_targets(history_msgs)
+                image_targets.update(discord_refs.image_targets)
+                image_target_message_ids = _collect_image_target_message_ids(history_msgs)
+                image_target_message_ids.update(discord_refs.image_target_message_ids)
+                req = Request(
+                    msg_list,
+                    message,
+                    is_proactive,
+                    reply_targets=reply_targets,
+                    image_targets=image_targets,
+                    image_target_message_ids=image_target_message_ids,
+                    image_description_cache=state.vl_description_cache,
+                    image_description_cache_times=state.vl_description_cache_times,
+                )
+                req.target_user_id = message.author.id
+                req.target_user_name = message.author.display_name
+                req.target_channel_id = message.channel.id
+                req.target_channel_name = getattr(message.channel, "name", str(message.channel.id))
+                req.trigger_message_id = message.id
+                req.attention_reason = attention_reason
+                req.original_message = log_message
+                if not await scheduler.add_request(req):
+                    try:
+                        await message.reply("腦袋快過載了，請等我一下下...", mention_author=False)
+                    except Exception:
+                        await message.channel.send("（系統忙碌中）")
 
         await bot.process_commands(message)
 
