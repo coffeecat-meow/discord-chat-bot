@@ -89,6 +89,7 @@ MEMORY_DB_FILE=memory.json
 PERMANENT_MEMORY_DB_FILE=permanent_memory.json
 USER_STATS_FILE=user_stats.json
 SHORT_MEMORY_FILE=short_term_memory.json
+SHORT_MEMORY_PENDING_FILE=logs/short_memory_pending.jsonl
 SHORT_MEMORY_TTL_SECONDS=21600
 SHORT_MEMORY_TRIGGER_MESSAGES=40
 SHORT_MEMORY_MIN_INTERVAL_SECONDS=600
@@ -96,6 +97,7 @@ SHORT_MEMORY_MAX_CONTEXT_CHARS=5000
 IMAGE_CACHE_TTL_SECONDS=21600
 IMAGE_CACHE_MAX_ITEMS=500
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
+INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
 OBSCURA_BIN=./obscura-aarch64-macos/obscura
 MAX_MEMORY_CONTEXT_CHARS=120000
@@ -103,7 +105,7 @@ MAX_MEMORY_CONTEXT_CHARS=120000
 
 `OPENROUTER_USE_REASONING_EFFORT=true` sends `reasoning.effort` to the text model only. Leave it `false` for models that do not support reasoning effort. `OPENROUTER_REASONING_EFFORT` is usually `low`, `medium`, or `high`.
 
-`OPENROUTER_SMALL_MODEL` is used for short-term memory summaries. If it is omitted, the bot uses `OPENROUTER_MODEL`.
+`OPENROUTER_SMALL_MODEL` is used for short-term memory digestion when the bot is invoked. If it is omitted, the bot uses `OPENROUTER_MODEL`.
 
 ## Web Search
 
@@ -145,6 +147,7 @@ Only Discord user IDs listed in `ADMIN_USER_IDS` can use these commands. Command
 - `/sayuki_status` - show queue and message stats
 - `/sayuki_tool_stats` - inspect tool calls, failures, and average durations
 - `/sayuki_debug_last` - show the latest processing/debug summary
+- `/sayuki_logs [kind] [day] [limit]` - inspect conversation, LLM invocation, or short-term memory logs
 - `/sayuki_clear_status` - clear the bot presence
 - `/sayuki_reload_prompt` - reload `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id` - inspect a user's memory
@@ -158,21 +161,25 @@ Runtime files are ignored by git:
 - `memory.json`
 - `permanent_memory.json`
 - `short_term_memory.json`
+- `logs/short_memory_pending.jsonl`
 - `user_stats.json`
 - `tool_stats.json`
 - `logs/conversation.jsonl`
+- `logs/invocation.jsonl`
 
 `memory.json` stores structured user profiles. It can be a single profile, a list of profiles, or a mapping of `{ "user_id": profile }`.
 
 At runtime, the bot injects full memory only for users related to the current context, such as the current speaker, recent channel participants, mentioned users, reply targets, and resolved message-link authors. Other profiles are injected as a compact index, and the model can request a full profile with `[[LOOKUP_MEMORY: user_id]]`.
 
-`short_term_memory.json` stores expiring channel summaries and recent user-bot interaction summaries. These summaries help the bot understand ongoing context without injecting raw cross-channel message history.
+`short_term_memory.json` stores expiring channel summaries and recent user-bot interaction summaries. Raw short-term candidates are appended to `logs/short_memory_pending.jsonl` and are not summarized in the background. They are digested only when the bot is actually invoked, so idle chat does not create LLM calls.
 
 `user_stats.json` stores lightweight interaction counters such as messages seen, bot triggers, bot replies, last interaction times, and channel-level counts.
 
 `tool_stats.json` stores persistent tool usage counters for today, current month, and all time, including failures and average duration.
 
-`logs/conversation.jsonl` stores lightweight conversation records only: timestamps, channel/user identifiers, trigger reason, user message text, bot response text, and query tool usage. It does not store the full prompt or full injected context.
+`logs/conversation.jsonl` stores conversation records: timestamps, channel/user identifiers, trigger reason, user message text, bot response text, and query tool usage.
+
+`logs/invocation.jsonl` stores LLM call records, including call type, model, non-system input messages, output text, duration, and success/error status. The system prompt content is omitted and only its character count is recorded.
 
 ## Running
 

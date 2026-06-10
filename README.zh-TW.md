@@ -89,6 +89,7 @@ MEMORY_DB_FILE=memory.json
 PERMANENT_MEMORY_DB_FILE=permanent_memory.json
 USER_STATS_FILE=user_stats.json
 SHORT_MEMORY_FILE=short_term_memory.json
+SHORT_MEMORY_PENDING_FILE=logs/short_memory_pending.jsonl
 SHORT_MEMORY_TTL_SECONDS=21600
 SHORT_MEMORY_TRIGGER_MESSAGES=40
 SHORT_MEMORY_MIN_INTERVAL_SECONDS=600
@@ -96,6 +97,7 @@ SHORT_MEMORY_MAX_CONTEXT_CHARS=5000
 IMAGE_CACHE_TTL_SECONDS=21600
 IMAGE_CACHE_MAX_ITEMS=500
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
+INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
 OBSCURA_BIN=./obscura-aarch64-macos/obscura
 MAX_MEMORY_CONTEXT_CHARS=120000
@@ -103,7 +105,7 @@ MAX_MEMORY_CONTEXT_CHARS=120000
 
 `OPENROUTER_USE_REASONING_EFFORT=true` 時，只會對文字模型送出 `reasoning.effort`，VL模型不會套用。若模型不支援effort level，請維持 `false`。`OPENROUTER_REASONING_EFFORT` 通常可填 `low`、`medium`、`high`。
 
-`OPENROUTER_SMALL_MODEL` 用於短期記憶摘要。若未設定，會沿用 `OPENROUTER_MODEL`。
+`OPENROUTER_SMALL_MODEL` 用於 bot 被呼叫時的短期記憶消化。若未設定，會沿用 `OPENROUTER_MODEL`。
 
 ## 網頁搜尋
 
@@ -145,6 +147,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `/sayuki_status`：查看佇列與發言統計
 - `/sayuki_tool_stats`：查看工具呼叫、失敗次數與平均耗時
 - `/sayuki_debug_last`：查看最近一次處理/debug摘要
+- `/sayuki_logs [kind] [day] [limit]`：查看對話、LLM調用或短期記憶紀錄
 - `/sayuki_clear_status`：清空 bot 動態狀態
 - `/sayuki_reload_prompt`：重新讀取 `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id`：查看指定使用者記憶
@@ -158,21 +161,25 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `memory.json`
 - `permanent_memory.json`
 - `short_term_memory.json`
+- `logs/short_memory_pending.jsonl`
 - `user_stats.json`
 - `tool_stats.json`
 - `logs/conversation.jsonl`
+- `logs/invocation.jsonl`
 
 `memory.json` 使用結構化使用者 profile，可放單一 profile、profile 陣列，或 `{ "user_id": profile }` 形式。
 
 執行時只會完整附送目前情境相關使用者的記憶，例如目前對話者、近期頻道參與者、被提及的人、回覆目標，以及訊息連結解析出的作者。其他使用者只會附成精簡索引，模型需要時可用 `[[LOOKUP_MEMORY: user_id]]` 查完整 profile。
 
-`short_term_memory.json` 儲存會過期的頻道摘要，以及近期使用者與 bot 的互動摘要。這能讓 bot 理解正在發生的事，但不會把跨頻道原文全部塞進上下文。
+`short_term_memory.json` 儲存會過期的頻道摘要，以及近期使用者與 bot 的互動摘要。短期記憶候選原文會先寫入 `logs/short_memory_pending.jsonl`，平常不背景摘要；只有 bot 真的被呼叫時才會消化有效內容，所以閒聊不會產生LLM調用。
 
 `user_stats.json` 儲存輕量互動統計，例如看過訊息數、觸發 bot 次數、bot 回覆次數、最後互動時間與頻道統計。
 
 `tool_stats.json` 儲存持久化工具統計，包含今日、本月、永久的呼叫次數、失敗次數與平均耗時。
 
-`logs/conversation.jsonl` 只儲存輕量對話紀錄：時間、頻道/使用者ID、觸發原因、使用者文字、bot回覆文字與查詢工具使用情況。不會儲存完整prompt或完整注入上下文。
+`logs/conversation.jsonl` 儲存對話紀錄：時間、頻道/使用者ID、觸發原因、使用者文字、bot回覆文字與查詢工具使用情況。
+
+`logs/invocation.jsonl` 儲存LLM調用紀錄，包含調用類型、模型、非system的輸入訊息、輸出文字、耗時與成功/錯誤狀態。system prompt內容不會逐次寫入，只會記錄字數。
 
 ## 啟動
 

@@ -221,6 +221,7 @@ class Scheduler:
         channel = getattr(req.interaction_obj, "channel", None)
         await self.conversation_logger.write(
             {
+                "log_type": "conversation",
                 "time": datetime.now(TW_TZ).isoformat(timespec="seconds"),
                 "mode": "proactive" if req.is_proactive else "triggered",
                 "attention_reason": req.attention_reason,
@@ -953,10 +954,10 @@ class Scheduler:
         self.interrupt_event.clear()
 
         if req.is_proactive:
-            raw_response = await self.llm.generate_async(req.messages)
+            raw_response = await self.llm.generate_async(req.messages, call_type="main_initial")
         else:
             async with interaction_obj.channel.typing():
-                raw_response = await self.llm.generate_async(req.messages)
+                raw_response = await self.llm.generate_async(req.messages, call_type="main_initial")
 
         if generation != self.interrupt_generation:
             return
@@ -989,10 +990,18 @@ class Scheduler:
                 return
 
             if req.is_proactive:
-                raw_response = await self.llm.generate_async(req.messages, max_search=1)
+                raw_response = await self.llm.generate_async(
+                    req.messages,
+                    max_search=1,
+                    call_type=f"query_tool_followup_round_{round_number}",
+                )
             else:
                 async with interaction_obj.channel.typing():
-                    raw_response = await self.llm.generate_async(req.messages, max_search=1)
+                    raw_response = await self.llm.generate_async(
+                        req.messages,
+                        max_search=1,
+                        call_type=f"query_tool_followup_round_{round_number}",
+                    )
 
         if generation != self.interrupt_generation:
             return
@@ -1138,10 +1147,11 @@ class Scheduler:
 
         if self.short_memory_mgr and clean_text and not req.is_proactive:
             target_user = interaction_obj.user if req.is_interaction else interaction_obj.author
-            self.short_memory_mgr.schedule_user_interaction_summary(
-                self.llm,
+            await self.short_memory_mgr.record_user_interaction(
                 target_user.id,
                 target_user.display_name,
+                req.target_channel_id or getattr(interaction_obj.channel, "id", 0),
+                req.target_channel_name or getattr(interaction_obj.channel, "name", str(getattr(interaction_obj.channel, "id", ""))),
                 req.original_message,
                 clean_text,
             )

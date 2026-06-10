@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
+import tempfile
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import discord
@@ -51,12 +54,14 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
 
     state = BotState()
     tool_stats_manager = ToolStatsManager(settings.tool_stats_file)
+    invocation_logger = ConversationLogger(settings.invocation_log_file)
     llm_engine = OpenRouterLLM(
         settings.openrouter_api_key,
         settings.openrouter_model,
         settings.openrouter_small_model,
         settings.openrouter_vl_model,
         tool_stats_manager,
+        invocation_logger,
         settings.openrouter_use_reasoning_effort,
         settings.openrouter_reasoning_effort,
     )
@@ -65,10 +70,12 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
     conversation_logger = ConversationLogger(settings.conversation_log_file)
     short_memory_manager = ShortTermMemoryManager(
         settings.short_memory_file,
+        settings.short_memory_pending_file,
         settings.short_memory_ttl_seconds,
         settings.short_memory_trigger_messages,
         settings.short_memory_min_interval_seconds,
         settings.short_memory_max_context_chars,
+        invocation_logger,
     )
     scheduler = Scheduler(
         llm_engine,
@@ -91,6 +98,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         memory_manager=memory_manager,
         user_stats_manager=user_stats_manager,
         conversation_logger=conversation_logger,
+        invocation_logger=invocation_logger,
         tool_stats_manager=tool_stats_manager,
         short_memory_manager=short_memory_manager,
         scheduler=scheduler,
@@ -108,6 +116,53 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             return mention_match.group(1) or mention_match.group(2)
 
         return value if value.isdigit() else None
+
+    def _log_time(event: dict) -> str:
+        for key in ("time", "started_at", "recorded_at", "finished_at"):
+            value = event.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    async def _read_log_entries(kind: str, day: str | None, limit: int) -> list[dict]:
+        safe_limit = max(1, min(limit, 100))
+        entries: list[dict] = []
+
+        if kind in {"all", "conversation"}:
+            entries.extend(await conversation_logger.read_recent(safe_limit, day, None))
+        if kind in {"all", "llm"}:
+            entries.extend(await invocation_logger.read_recent(safe_limit, day, "llm_call"))
+        if kind in {"all", "short_memory"}:
+            entries.extend(await invocation_logger.read_recent(safe_limit, day, "short_memory"))
+            pending_logger = ConversationLogger(settings.short_memory_pending_file)
+            entries.extend(await pending_logger.read_recent(safe_limit, day, "short_memory_pending"))
+
+        entries.sort(key=_log_time)
+        return entries[-safe_limit:]
+
+    async def _send_log_entries(
+        interaction: discord.Interaction,
+        entries: list[dict],
+        kind: str,
+        day: str | None,
+    ) -> None:
+        if not entries:
+            await interaction.followup.send("找不到符合條件的紀錄。", ephemeral=True)
+            return
+
+        content = "\n".join(json.dumps(entry, ensure_ascii=False, indent=2) for entry in entries)
+        title = f"kind={kind} day={day or 'all'} count={len(entries)}"
+        if len(content) <= 1700:
+            await interaction.followup.send(f"{title}\n```json\n{content}\n```", ephemeral=True)
+            return
+
+        output_path = Path(tempfile.gettempdir()) / f"sayuki_logs_{kind}_{day or 'all'}.json"
+        output_path.write_text(content + "\n", encoding="utf-8")
+        await interaction.followup.send(
+            f"{title}\n紀錄太長，已用檔案附上。",
+            file=discord.File(output_path, filename=output_path.name),
+            ephemeral=True,
+        )
 
     def _collect_image_targets(messages: list[discord.Message]) -> dict[str, list[str]]:
         targets: dict[str, list[str]] = {}
@@ -191,6 +246,13 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             list(discord_refs.reply_targets.values()),
         )
         memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
+        await short_memory_manager.digest_pending(
+            llm_engine,
+            interaction.channel.id,
+            getattr(interaction.channel, "name", str(interaction.channel.id)),
+            interaction.user.id,
+            interaction.user.display_name,
+        )
         scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
         chat_history = build_chat_history(
             history_msgs,
@@ -323,6 +385,39 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             debug_text = debug_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{debug_text}\n```", ephemeral=True)
 
+    @bot.tree.command(name="sayuki_logs", description="管理員限定：查看bot紀錄")
+    @app_commands.describe(
+        kind="紀錄分類：all/conversation/llm/short_memory",
+        day="可選，YYYY-MM-DD，例如 2026-06-10",
+        limit="最多顯示幾筆，1到100",
+    )
+    @app_commands.choices(
+        kind=[
+            app_commands.Choice(name="全部", value="all"),
+            app_commands.Choice(name="呼叫log", value="conversation"),
+            app_commands.Choice(name="LLM調用log", value="llm"),
+            app_commands.Choice(name="短期記憶log", value="short_memory"),
+        ]
+    )
+    async def sayuki_logs(
+        interaction: discord.Interaction,
+        kind: str = "all",
+        day: str | None = None,
+        limit: int = 20,
+    ):
+        if not _is_admin(interaction.user.id):
+            await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
+            return
+
+        day = day.strip() if day else None
+        if day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            await interaction.response.send_message("day格式請用 YYYY-MM-DD，例如 2026-06-10", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        entries = await _read_log_entries(kind, day, limit)
+        await _send_log_entries(interaction, entries, kind, day)
+
     @bot.tree.command(name="sayuki_clear_status", description="管理員限定：清空紗月目前動態狀態")
     async def sayuki_clear_status(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
@@ -411,15 +506,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         bot_user_id = bot.user.id
         cached_msgs = await get_cached_messages(message, state.channel_message_cache)
         await user_stats_manager.record_seen_message(message)
-        short_memory_manager.record_channel_message(message.channel.id)
-        if short_memory_manager.should_summarize_channel(message.channel.id):
-            short_memory_manager.schedule_channel_summary(
-                llm_engine,
-                message.channel.id,
-                getattr(message.channel, "name", str(message.channel.id)),
-                cached_msgs,
-                bot_user_id,
-            )
+        await short_memory_manager.record_channel_message(message, bot_user_id)
         is_mentioned, is_keyword, is_reply = get_attention_flags(message, bot_user_id)
 
         should_echo = should_echo_message(
@@ -471,6 +558,13 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 list(discord_refs.reply_targets.values()),
             )
             memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
+            await short_memory_manager.digest_pending(
+                llm_engine,
+                message.channel.id,
+                getattr(message.channel, "name", str(message.channel.id)),
+                message.author.id,
+                message.author.display_name,
+            )
             scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
             chat_history = build_chat_history(
                 history_msgs,
