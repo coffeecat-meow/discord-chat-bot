@@ -87,6 +87,7 @@ ECHO_MIN_USERS=3
 SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.txt
 MEMORY_DB_FILE=memory.json
 PERMANENT_MEMORY_DB_FILE=permanent_memory.json
+SERVER_MEMORY_FILE=server_memory.json
 USER_STATS_FILE=user_stats.json
 SHORT_MEMORY_FILE=short_term_memory.json
 SHORT_MEMORY_PENDING_FILE=logs/short_memory_pending.jsonl
@@ -123,6 +124,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 模型可以輸出隱藏工具標記，例如：
 
 - `[[SEARCH: query]]`
+- `[[READ_WEB: URL]]`
 - `[[REPLY_TO: #msg_1234]]`
 - `[[SPLIT]]` / `[[SPLIT-WAIT]]`
 - `[[REMIND: minutes | content]]`
@@ -132,6 +134,11 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `[[MATH_CALC: expression]]`
 - `[[MEM_SET: user_id | field | content]]`
 - `[[MEM_EVENT_FOR: user_id | YYYY-MM-DD | type | source | content]]`
+- `[[SERVER_MEMORY: type | content]]`
+- `[[DM_USER: user_id | message]]`
+- `[[THREAD: thread title | first message]]`
+- `[[NICKNAME: user_id | new nickname]]`
+- `[[SERVER_EVENT: event name | YYYY-MM-DD HH:MM | YYYY-MM-DD HH:MM | location | description]]`
 - `[[USER_STATS: user_id]]`
 - `[[LOOKUP_MEMORY: user_id]]`
 - `[[STATUS: text]]`
@@ -152,6 +159,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `/sayuki_reload_prompt`：重新讀取 `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id`：查看指定使用者記憶
 - `/sayuki_memory_permanent`：查看永久記憶
+- `/sayuki_memory_server`：查看目前伺服器記憶
 - `/sayuki_user_stats user_id`：查看指定使用者互動統計
 
 ## 記憶檔案
@@ -160,6 +168,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 
 - `memory.json`
 - `permanent_memory.json`
+- `server_memory.json`
 - `short_term_memory.json`
 - `logs/short_memory_pending.jsonl`
 - `user_stats.json`
@@ -170,6 +179,8 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 `memory.json` 使用結構化使用者 profile，可放單一 profile、profile 陣列，或 `{ "user_id": profile }` 形式。
 
 執行時只會完整附送目前情境相關使用者的記憶，例如目前對話者、近期頻道參與者、被提及的人、回覆目標，以及訊息連結解析出的作者。其他使用者只會附成精簡索引，模型需要時可用 `[[LOOKUP_MEMORY: user_id]]` 查完整 profile。
+
+`server_memory.json` 儲存Discord伺服器專屬的梗、稱呼、黑歷史與重大事件。
 
 `short_term_memory.json` 儲存會過期的頻道摘要，以及近期使用者與 bot 的互動摘要。短期記憶候選原文會先寫入 `logs/short_memory_pending.jsonl`，平常不背景摘要；只有 bot 真的被呼叫時才會消化有效內容，所以閒聊不會產生LLM調用。
 

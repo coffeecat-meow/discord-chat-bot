@@ -22,6 +22,8 @@ class Request:
     target_user_name: str = ""
     target_channel_id: int | None = None
     target_channel_name: str = ""
+    target_guild_id: int | None = None
+    target_guild_name: str = ""
     trigger_message_id: int | None = None
     attention_reason: str = ""
     original_message: str = ""

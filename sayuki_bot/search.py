@@ -15,6 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SEARCH_RESULT_LIMIT = 3
 OBSCURA_TIMEOUT_SECONDS = 15
 MAX_TEXT_PER_PAGE = 6000
+MAX_READ_WEB_CHARS = 12000
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,14 @@ class BrowserScan:
     discovered_urls: int
     scanned_characters: int
     raw_text: str
+
+
+@dataclass(frozen=True)
+class WebPageRead:
+    url: str
+    scanned_characters: int
+    text: str
+    success: bool
 
 
 def _search_url(query: str) -> str:
@@ -152,4 +161,45 @@ async def search_web(query: str) -> BrowserScan:
             discovered_urls=0,
             scanned_characters=0,
             raw_text=f"搜尋發生錯誤: {exc}",
+        )
+
+
+async def read_web_page(url: str) -> WebPageRead:
+    clean_url = _clean_url(url)
+    if not clean_url:
+        return WebPageRead(
+            url=url,
+            scanned_characters=0,
+            text="讀取失敗：URL格式不正確，只支援http/https網址。",
+            success=False,
+        )
+
+    try:
+        page_text = await _fetch_with_obscura(clean_url, "text")
+        text = page_text[:MAX_READ_WEB_CHARS]
+        if len(page_text) > MAX_READ_WEB_CHARS:
+            text += "\n...（網頁文字過長，已截斷）"
+        return WebPageRead(
+            url=clean_url,
+            scanned_characters=len(page_text),
+            text=text or "讀取成功，但網頁沒有可用文字內容。",
+            success=True,
+        )
+    except FileNotFoundError:
+        return WebPageRead(
+            url=clean_url,
+            scanned_characters=0,
+            text=(
+                "讀取網頁功能未啟用：找不到 Obscura 可執行檔。"
+                "請安裝 https://github.com/h4ckf0r0day/obscura.git 的 release binary，"
+                "並放入 PATH，或用 OBSCURA_BIN 指定路徑。"
+            ),
+            success=False,
+        )
+    except Exception as exc:
+        return WebPageRead(
+            url=clean_url,
+            scanned_characters=0,
+            text=f"讀取網頁失敗：{exc}",
+            success=False,
         )

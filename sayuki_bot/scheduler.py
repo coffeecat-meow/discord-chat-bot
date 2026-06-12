@@ -17,6 +17,7 @@ from .conversation_log import ConversationLogger
 from .llm import OpenRouterLLM
 from .memory import MemoryManager
 from .models import Request
+from .search import read_web_page
 from .state import BotStats
 from .tool_tags import MEMORY_TOOL_NAMES, find_balanced_tool_tags, strip_balanced_tool_tags
 from .ui import InteractiveAskView
@@ -24,6 +25,7 @@ from .ui import InteractiveAskView
 
 logger = logging.getLogger(__name__)
 
+ACTION_TOOL_NAMES = ("DM_USER", "THREAD", "NICKNAME", "SERVER_EVENT")
 SPLIT_TOKEN_RE = re.compile(r"(\[\[SPLIT(?:-WAIT)?\]\])")
 TOOL_TAG_RE = re.compile(r"\[\[(?!SPLIT(?:-WAIT)?\]\]|REPLY_TO:).*?\]\]", flags=re.DOTALL)
 REPLY_TO_RE = re.compile(r"\[\[REPLY_TO:\s*#?(msg_\d{1,})\s*\]\]")
@@ -32,9 +34,10 @@ PING_TAG_RE = re.compile(r"\[\[PING:\s*(\d+)\s*\]\]")
 CHECK_ROLES_RE = re.compile(r"\[\[CHECK_ROLES:\s*(\d+)\s*\]\]")
 USER_STATS_RE = re.compile(r"\[\[USER_STATS:\s*(\d+)\s*\]\]")
 LOOKUP_MEMORY_RE = re.compile(r"\[\[LOOKUP_MEMORY:\s*(\d+)\s*\]\]")
+READ_WEB_RE = re.compile(r"\[\[READ_WEB:\s*(https?://.*?)\s*\]\]", flags=re.DOTALL)
 VIEW_IMAGE_RE = re.compile(r"\[\[VIEW_IMAGE:\s*#?(msg_\d{1,})\s*\]\]")
 QUERY_TOOL_RE = re.compile(
-    r"\[\[(?:VIEW_IMAGE:\s*#?msg_\d{1,}|CHECK_ROLES:\s*\d+|USER_STATS:\s*\d+|LOOKUP_MEMORY:\s*\d+)\s*\]\]",
+    r"\[\[(?:VIEW_IMAGE:\s*#?msg_\d{1,}|CHECK_ROLES:\s*\d+|USER_STATS:\s*\d+|LOOKUP_MEMORY:\s*\d+|READ_WEB:\s*https?://.*?)\s*\]\]",
     flags=re.DOTALL,
 )
 STATUS_RE = re.compile(r"\[\[STATUS:\s*(.*?)\s*\]\]", flags=re.DOTALL)
@@ -83,8 +86,27 @@ def _preview_text(text: str, limit: int = 240) -> str:
     return text[:limit] + "..."
 
 
+def _parse_local_datetime(value: str) -> datetime | None:
+    text = value.strip()
+    if not text:
+        return None
+
+    normalized = text.replace("/", "-")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=TW_TZ)
+    return parsed
+
+
 def _strip_hidden_tool_tags(text: str) -> str:
-    text = strip_balanced_tool_tags(text, MEMORY_TOOL_NAMES)
+    text = strip_balanced_tool_tags(text, MEMORY_TOOL_NAMES + ACTION_TOOL_NAMES)
     return TOOL_TAG_RE.sub("", text)
 
 
@@ -381,7 +403,7 @@ class Scheduler:
 
     def _typing_seconds(self, text: str) -> float:
         length = len(text.strip())
-        if length <= 2:
+        if length <= 0:
             return 0.0
 
         return min(length * 0.1, 2.0)
@@ -504,6 +526,185 @@ class Scheduler:
             finally:
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("MUTE", (perf_counter() - started) * 1000, success)
+
+    async def _send_tool_text_to_channel(self, channel, text: str, interaction_obj) -> bool:
+        clean_text = self._apply_ping_tags(text, interaction_obj)
+        clean_text = _strip_hidden_tool_tags(clean_text)
+        clean_text = re.sub(r"<think>.*?(?:</think>|$)", "", clean_text, flags=re.DOTALL).strip()
+        clean_text = self.opencc_converter.convert(clean_text)
+        if not clean_text:
+            return False
+
+        sent_any = False
+        for content, split_token, _ in self._response_items(clean_text):
+            chunks = [content[i:i + 1900] for i in range(0, len(content), 1900)] if content else [""]
+            for index, chunk in enumerate(chunks):
+                if not chunk:
+                    continue
+                await self._simulate_split_delay(channel, chunk, split_token if index == 0 else None)
+                await channel.send(chunk)
+                sent_any = True
+        return sent_any
+
+    async def _apply_dm_tags(self, raw_response: str, interaction_obj) -> None:
+        tags = find_balanced_tool_tags(raw_response, ACTION_TOOL_NAMES)
+        for tag in tags:
+            if tag.name != "DM_USER":
+                continue
+
+            parts = [part.strip() for part in tag.body.split("|", 1)]
+            if len(parts) != 2 or not parts[0].isdigit():
+                continue
+
+            started = perf_counter()
+            success = False
+            try:
+                user = self.bot.get_user(int(parts[0])) if self.bot else None
+                if not user and self.bot:
+                    user = await self.bot.fetch_user(int(parts[0]))
+                if not user:
+                    continue
+
+                dm_channel = user.dm_channel or await user.create_dm()
+                success = await self._send_tool_text_to_channel(dm_channel, parts[1], interaction_obj)
+            except Exception as exc:
+                logger.error("私訊使用者失敗: %s", exc)
+            finally:
+                if self.tool_stats_mgr:
+                    await self.tool_stats_mgr.record_tool("DM_USER", (perf_counter() - started) * 1000, success)
+
+    async def _apply_thread_tags(self, raw_response: str, interaction_obj) -> None:
+        tags = find_balanced_tool_tags(raw_response, ACTION_TOOL_NAMES)
+        for tag in tags:
+            if tag.name != "THREAD":
+                continue
+
+            parts = [part.strip() for part in tag.body.split("|", 1)]
+            if not parts or not parts[0]:
+                continue
+
+            title = parts[0][:100]
+            first_message = parts[1] if len(parts) > 1 else ""
+            started = perf_counter()
+            success = False
+            try:
+                channel = getattr(interaction_obj, "channel", None)
+                if not channel:
+                    continue
+
+                source_message = interaction_obj if isinstance(interaction_obj, discord.Message) else getattr(interaction_obj, "message", None)
+                if source_message and hasattr(source_message, "create_thread"):
+                    thread = await source_message.create_thread(name=title, auto_archive_duration=1440)
+                else:
+                    thread = await channel.create_thread(name=title, auto_archive_duration=1440)
+
+                if first_message.strip():
+                    await self._send_tool_text_to_channel(thread, first_message, interaction_obj)
+                success = True
+            except Exception as exc:
+                logger.error("建立討論串失敗: %s", exc)
+            finally:
+                if self.tool_stats_mgr:
+                    await self.tool_stats_mgr.record_tool("THREAD", (perf_counter() - started) * 1000, success)
+
+    async def _apply_nickname_tags(self, raw_response: str, interaction_obj) -> None:
+        guild = self._guild_from_interaction(interaction_obj)
+        if not guild:
+            return
+
+        tags = find_balanced_tool_tags(raw_response, ACTION_TOOL_NAMES)
+        for tag in tags:
+            if tag.name != "NICKNAME":
+                continue
+
+            parts = [part.strip() for part in tag.body.split("|", 1)]
+            if len(parts) != 2 or not parts[0].isdigit():
+                continue
+
+            started = perf_counter()
+            success = False
+            try:
+                member = await self._find_member(guild, int(parts[0]))
+                if not member:
+                    logger.warning("更改暱稱失敗，找不到成員: %s", parts[0])
+                    continue
+
+                nickname = self.opencc_converter.convert(parts[1]).strip()
+                await member.edit(
+                    nick=nickname[:32] if nickname else None,
+                    reason="Sayuki 更改伺服器暱稱",
+                )
+                success = True
+                logger.info("已更改 %s 的伺服器暱稱", parts[0])
+            except Exception as exc:
+                logger.error("更改伺服器暱稱失敗: %s", exc)
+            finally:
+                if self.tool_stats_mgr:
+                    await self.tool_stats_mgr.record_tool("NICKNAME", (perf_counter() - started) * 1000, success)
+
+    def _parse_event_end_time(self, start_time: datetime, end_text: str) -> datetime | None:
+        text = end_text.strip()
+        if not text:
+            return None
+
+        try:
+            minutes = int(text)
+        except ValueError:
+            return _parse_local_datetime(text)
+
+        return start_time + timedelta(minutes=max(1, minutes))
+
+    async def _apply_server_event_tags(self, raw_response: str, interaction_obj) -> None:
+        guild = self._guild_from_interaction(interaction_obj)
+        if not guild:
+            return
+
+        tags = find_balanced_tool_tags(raw_response, ACTION_TOOL_NAMES)
+        for tag in tags:
+            if tag.name != "SERVER_EVENT":
+                continue
+
+            parts = [part.strip() for part in tag.body.split("|", 4)]
+            if len(parts) != 5:
+                continue
+
+            name, start_text, end_text, location, description = parts
+            if not name or not location:
+                continue
+
+            start_time = _parse_local_datetime(start_text)
+            if not start_time:
+                logger.warning("建立伺服器活動失敗，開始時間格式錯誤: %s", start_text)
+                continue
+
+            end_time = self._parse_event_end_time(start_time, end_text)
+            if not end_time:
+                logger.warning("建立伺服器活動失敗，結束時間格式錯誤: %s", end_text)
+                continue
+            if end_time <= start_time:
+                logger.warning("建立伺服器活動失敗，結束時間不可早於開始時間")
+                continue
+
+            started = perf_counter()
+            success = False
+            try:
+                await guild.create_scheduled_event(
+                    name=self.opencc_converter.convert(name)[:100],
+                    start_time=start_time,
+                    end_time=end_time,
+                    entity_type=discord.EntityType.external,
+                    privacy_level=discord.PrivacyLevel.guild_only,
+                    location=self.opencc_converter.convert(location)[:100],
+                    description=self.opencc_converter.convert(description)[:1000],
+                    reason="Sayuki 建立伺服器活動",
+                )
+                success = True
+                logger.info("已建立伺服器活動: %s", name)
+            except Exception as exc:
+                logger.error("建立伺服器活動失敗: %s", exc)
+            finally:
+                if self.tool_stats_mgr:
+                    await self.tool_stats_mgr.record_tool("SERVER_EVENT", (perf_counter() - started) * 1000, success)
 
     async def _build_image_tool_report(
         self,
@@ -704,6 +905,41 @@ class Scheduler:
 
         return "【系統完整記憶查詢結果】\n" + "\n\n".join(reports)
 
+    async def _build_read_web_tool_report(
+        self,
+        raw_response: str,
+        tool_events: list[str] | None = None,
+    ) -> str:
+        matches = READ_WEB_RE.findall(raw_response)
+        if not matches:
+            return ""
+
+        seen_urls: set[str] = set()
+        reports = []
+        for raw_url in matches:
+            started = perf_counter()
+            url = raw_url.strip()
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            if tool_events is not None:
+                tool_events.append(f"READ_WEB {url}")
+
+            result = await read_web_page(url)
+            reports.append(
+                f"網址：{result.url}\n"
+                f"原始文字量：{result.scanned_characters}字元\n\n"
+                f"{result.text}"
+            )
+            if self.tool_stats_mgr:
+                await self.tool_stats_mgr.record_tool(
+                    "READ_WEB",
+                    (perf_counter() - started) * 1000,
+                    result.success,
+                )
+
+        return "【系統網頁讀取結果】\n" + "\n\n".join(reports)
+
     async def _run_query_tools_once(
         self,
         raw_response: str,
@@ -722,6 +958,7 @@ class Scheduler:
                 await self._build_roles_tool_report(raw_response, interaction_obj, tool_events),
                 await self._build_user_stats_tool_report(raw_response, tool_events),
                 await self._build_memory_lookup_tool_report(raw_response, tool_events),
+                await self._build_read_web_tool_report(raw_response, tool_events),
             ]
             filtered_reports = [report for report in reports if report]
             if debug_record is not None and filtered_reports:
@@ -943,6 +1180,8 @@ class Scheduler:
             "name",
             str(getattr(interaction_obj.channel, "id", "")),
         )
+        new_req.target_guild_id = getattr(getattr(interaction_obj, "guild", None), "id", None)
+        new_req.target_guild_name = getattr(getattr(interaction_obj, "guild", None), "name", "")
         new_req.trigger_message_id = getattr(interaction_obj, "id", None)
         new_req.attention_reason = "定時提醒"
         new_req.original_message = f"定時提醒：{content}"
@@ -1026,10 +1265,14 @@ class Scheduler:
         user_name = interaction_obj.author.display_name if not req.is_interaction else interaction_obj.user.display_name
         req.user_name = user_name
 
-        await self._apply_memory_tags(raw_response)
+        await self._apply_memory_tags(raw_response, req, interaction_obj)
         await self._apply_reactions(raw_response, interaction_obj)
         await self._apply_status_tags(raw_response)
         await self._apply_mute_tags(raw_response, interaction_obj)
+        await self._apply_dm_tags(raw_response, interaction_obj)
+        await self._apply_thread_tags(raw_response, interaction_obj)
+        await self._apply_nickname_tags(raw_response, interaction_obj)
+        await self._apply_server_event_tags(raw_response, interaction_obj)
         await self._schedule_reminder(raw_response, req, interaction_obj)
 
         ping_count = len(set(PING_TAG_RE.findall(raw_response)))
@@ -1156,7 +1399,7 @@ class Scheduler:
                 clean_text,
             )
 
-    async def _apply_memory_tags(self, raw_response: str) -> None:
+    async def _apply_memory_tags(self, raw_response: str, req: Request, interaction_obj) -> None:
         memory_tags = find_balanced_tool_tags(raw_response, MEMORY_TOOL_NAMES)
         memory_tool_count = len(memory_tags)
         field_paths = {
@@ -1228,6 +1471,20 @@ class Scheduler:
             elif tag.name == "DELETE_PERMANENT_MEMORY":
                 if tag.body:
                     await self.memory_mgr.delete_permanent_memory(tag.body)
+
+            elif tag.name == "SERVER_MEMORY":
+                parts = [part.strip() for part in tag.body.split("|", 1)]
+                if len(parts) == 2:
+                    guild = self._guild_from_interaction(interaction_obj)
+                    guild_id = req.target_guild_id or getattr(guild, "id", None)
+                    guild_name = req.target_guild_name or getattr(guild, "name", "")
+                    await self.memory_mgr.add_server_memory(guild_id, guild_name, parts[0], parts[1])
+
+            elif tag.name == "DELETE_SERVER_MEMORY":
+                if tag.body:
+                    guild = self._guild_from_interaction(interaction_obj)
+                    guild_id = req.target_guild_id or getattr(guild, "id", None)
+                    await self.memory_mgr.delete_server_memory(guild_id, tag.body)
 
         if memory_tool_count and self.tool_stats_mgr:
             for _ in range(memory_tool_count):

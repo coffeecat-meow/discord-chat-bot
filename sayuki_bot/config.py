@@ -31,6 +31,7 @@ class Settings:
     system_prompt_path: Path
     memory_db_file: str
     permanent_memory_db_file: str
+    server_memory_file: str
     user_stats_file: str
     short_memory_file: str
     short_memory_pending_file: Path
@@ -128,6 +129,7 @@ def load_settings() -> Settings:
         system_prompt_path=_env_path("SYSTEM_PROMPT_PATH", BASE_DIR / "SYSTEM_PROMPT.txt"),
         memory_db_file=os.getenv("MEMORY_DB_FILE", "memory.json"),
         permanent_memory_db_file=os.getenv("PERMANENT_MEMORY_DB_FILE", "permanent_memory.json"),
+        server_memory_file=os.getenv("SERVER_MEMORY_FILE", "server_memory.json"),
         user_stats_file=os.getenv("USER_STATS_FILE", "user_stats.json"),
         short_memory_file=os.getenv("SHORT_MEMORY_FILE", "short_term_memory.json"),
         short_memory_pending_file=_env_path(

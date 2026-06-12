@@ -87,6 +87,7 @@ ECHO_MIN_USERS=3
 SYSTEM_PROMPT_PATH=SYSTEM_PROMPT.txt
 MEMORY_DB_FILE=memory.json
 PERMANENT_MEMORY_DB_FILE=permanent_memory.json
+SERVER_MEMORY_FILE=server_memory.json
 USER_STATS_FILE=user_stats.json
 SHORT_MEMORY_FILE=short_term_memory.json
 SHORT_MEMORY_PENDING_FILE=logs/short_memory_pending.jsonl
@@ -123,6 +124,7 @@ Obscura binaries are ignored by git through `obscura*`.
 The model can emit hidden tool tags such as:
 
 - `[[SEARCH: query]]`
+- `[[READ_WEB: URL]]`
 - `[[REPLY_TO: #msg_1234]]`
 - `[[SPLIT]]` / `[[SPLIT-WAIT]]`
 - `[[REMIND: minutes | content]]`
@@ -132,6 +134,11 @@ The model can emit hidden tool tags such as:
 - `[[MATH_CALC: expression]]`
 - `[[MEM_SET: user_id | field | content]]`
 - `[[MEM_EVENT_FOR: user_id | YYYY-MM-DD | type | source | content]]`
+- `[[SERVER_MEMORY: type | content]]`
+- `[[DM_USER: user_id | message]]`
+- `[[THREAD: thread title | first message]]`
+- `[[NICKNAME: user_id | new nickname]]`
+- `[[SERVER_EVENT: event name | YYYY-MM-DD HH:MM | YYYY-MM-DD HH:MM | location | description]]`
 - `[[USER_STATS: user_id]]`
 - `[[LOOKUP_MEMORY: user_id]]`
 - `[[STATUS: text]]`
@@ -152,6 +159,7 @@ Only Discord user IDs listed in `ADMIN_USER_IDS` can use these commands. Command
 - `/sayuki_reload_prompt` - reload `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id` - inspect a user's memory
 - `/sayuki_memory_permanent` - inspect permanent bot memory
+- `/sayuki_memory_server` - inspect memory for the current Discord server
 - `/sayuki_user_stats user_id` - inspect user interaction statistics
 
 ## Memory Files
@@ -160,6 +168,7 @@ Runtime files are ignored by git:
 
 - `memory.json`
 - `permanent_memory.json`
+- `server_memory.json`
 - `short_term_memory.json`
 - `logs/short_memory_pending.jsonl`
 - `user_stats.json`
@@ -170,6 +179,8 @@ Runtime files are ignored by git:
 `memory.json` stores structured user profiles. It can be a single profile, a list of profiles, or a mapping of `{ "user_id": profile }`.
 
 At runtime, the bot injects full memory only for users related to the current context, such as the current speaker, recent channel participants, mentioned users, reply targets, and resolved message-link authors. Other profiles are injected as a compact index, and the model can request a full profile with `[[LOOKUP_MEMORY: user_id]]`.
+
+`server_memory.json` stores Discord-server-specific jokes, nicknames, running gags, and important server events.
 
 `short_term_memory.json` stores expiring channel summaries and recent user-bot interaction summaries. Raw short-term candidates are appended to `logs/short_memory_pending.jsonl` and are not summarized in the background. They are digested only when the bot is actually invoked, so idle chat does not create LLM calls.
 

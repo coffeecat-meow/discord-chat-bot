@@ -66,7 +66,11 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         settings.openrouter_use_reasoning_effort,
         settings.openrouter_reasoning_effort,
     )
-    memory_manager = MemoryManager(settings.memory_db_file, settings.permanent_memory_db_file)
+    memory_manager = MemoryManager(
+        settings.memory_db_file,
+        settings.permanent_memory_db_file,
+        settings.server_memory_file,
+    )
     user_stats_manager = UserStatsManager(settings.user_stats_file)
     conversation_logger = ConversationLogger(settings.conversation_log_file)
     short_memory_manager = ShortTermMemoryManager(
@@ -278,6 +282,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             "系統讓你主動查看目前頻道",
             memory_context,
             memory_manager.get_permanent_memory(),
+            memory_manager.get_server_memory(getattr(interaction.guild, "id", None)),
             short_memory_manager.build_context(interaction.channel.id, interaction.user.id),
             chat_history,
             state.stats,
@@ -321,6 +326,8 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         req.target_user_name = interaction.user.display_name
         req.target_channel_id = interaction.channel.id
         req.target_channel_name = getattr(interaction.channel, "name", str(interaction.channel.id))
+        req.target_guild_id = getattr(interaction.guild, "id", None)
+        req.target_guild_name = getattr(interaction.guild, "name", "")
         req.trigger_message_id = current_message.id
         req.attention_reason = "slash指令主動查看"
         req.original_message = f"管理員觸發主動查看。{note_text.strip()}" if note_text else "管理員觸發主動查看"
@@ -476,6 +483,30 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             memory_text = memory_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{memory_text}\n```", ephemeral=True)
 
+    @bot.tree.command(name="sayuki_memory_server", description="管理員限定：查看目前伺服器記憶")
+    async def sayuki_memory_server(interaction: discord.Interaction):
+        if not _is_admin(interaction.user.id):
+            await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message("這個指令只能在Discord伺服器內使用", ephemeral=True)
+            return
+
+        memory_text = memory_manager.get_server_memory(interaction.guild.id)
+        content = f"伺服器：{interaction.guild.name} ({interaction.guild.id})\n\n{memory_text}"
+        if len(content) <= 1900:
+            await interaction.response.send_message(f"```text\n{content}\n```", ephemeral=True)
+            return
+
+        output_path = Path(tempfile.gettempdir()) / f"sayuki_server_memory_{interaction.guild.id}.txt"
+        output_path.write_text(content + "\n", encoding="utf-8")
+        await interaction.response.send_message(
+            "伺服器記憶太長，已用檔案附上。",
+            file=discord.File(output_path, filename=output_path.name),
+            ephemeral=True,
+        )
+
     @bot.tree.command(name="sayuki_user_stats", description="管理員限定：查看指定使用者互動統計")
     @app_commands.describe(user_id="Discord 使用者ID，或直接貼使用者mention")
     async def sayuki_user_stats(interaction: discord.Interaction, user_id: str):
@@ -592,11 +623,12 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                     user_name,
                     message.author.id,
                     attention_reason,
-                    memory_context,
-                    memory_manager.get_permanent_memory(),
-                    short_memory_manager.build_context(message.channel.id, message.author.id),
-                    chat_history,
-                    state.stats,
+                memory_context,
+                memory_manager.get_permanent_memory(),
+                memory_manager.get_server_memory(getattr(message.guild, "id", None)),
+                short_memory_manager.build_context(message.channel.id, message.author.id),
+                chat_history,
+                state.stats,
                     is_proactive,
                 )
 
@@ -634,6 +666,8 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 req.target_user_name = message.author.display_name
                 req.target_channel_id = message.channel.id
                 req.target_channel_name = getattr(message.channel, "name", str(message.channel.id))
+                req.target_guild_id = getattr(message.guild, "id", None)
+                req.target_guild_name = getattr(message.guild, "name", "")
                 req.trigger_message_id = message.id
                 req.attention_reason = attention_reason
                 req.original_message = log_message

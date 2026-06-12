@@ -221,6 +221,7 @@ def build_system_context(
     attention_reason: str,
     memory_context: str,
     permanent_memory: str,
+    server_memory: str,
     short_term_context: str,
     chat_history: str,
     stats: BotStats,
@@ -238,6 +239,7 @@ def build_system_context(
         "如果索引中的某人和當前話題明顯有關，可使用 [[LOOKUP_MEMORY: DiscordID]] 查完整記憶。\n\n"
         f"[相關使用者記憶與索引]\n{memory_context}\n\n"
         f"[你的永久記憶]\n{permanent_memory}\n\n"
+        f"[目前伺服器記憶]\n{server_memory}\n\n"
         f"[短期上下文摘要]\n{short_term_context}\n\n"
         f"[近期群組對話]\n{chat_history}"
     )

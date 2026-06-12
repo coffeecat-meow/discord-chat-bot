@@ -15,6 +15,7 @@ temp/
 logs/
 memory.json
 permanent_memory.json
+server_memory.json
 short_term_memory.json
 user_stats.json
 tool_stats.json

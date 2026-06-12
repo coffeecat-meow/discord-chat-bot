@@ -68,6 +68,8 @@ class InteractiveAskView(discord.ui.View):
             new_req.target_user_name = interaction.user.display_name
             new_req.target_channel_id = interaction.channel.id if interaction.channel else None
             new_req.target_channel_name = getattr(interaction.channel, "name", str(getattr(interaction.channel, "id", "")))
+            new_req.target_guild_id = interaction.guild.id if interaction.guild else None
+            new_req.target_guild_name = interaction.guild.name if interaction.guild else ""
             new_req.trigger_message_id = interaction.message.id if interaction.message else None
             new_req.attention_reason = "互動按鈕回覆"
             new_req.original_message = f"互動按鈕選擇：{option}"

@@ -69,11 +69,18 @@ def _truncate_context(text: str) -> str:
 
 
 class MemoryManager:
-    def __init__(self, db_file: str = "memory.json", permanent_db_file: str = "permanent_memory.json"):
+    def __init__(
+        self,
+        db_file: str = "memory.json",
+        permanent_db_file: str = "permanent_memory.json",
+        server_memory_file: str = "server_memory.json",
+    ):
         self.db_file = db_file
         self.permanent_db_file = permanent_db_file
+        self.server_memory_file = server_memory_file
         self.data: dict[str, dict[str, Any]] = {}
         self.permanent_data = {"facts": []}
+        self.server_data: dict[str, dict[str, Any]] = {}
         self.lock = asyncio.Lock()
 
     def _normalize_loaded_memory(self, loaded: Any) -> dict[str, dict[str, Any]]:
@@ -119,6 +126,14 @@ class MemoryManager:
         else:
             self.permanent_data = {"facts": []}
 
+        if os.path.exists(self.server_memory_file):
+            async with aiofiles.open(self.server_memory_file, "r", encoding="utf-8") as file:
+                content = await file.read()
+                loaded = json.loads(content) if content else {}
+                self.server_data = loaded if isinstance(loaded, dict) else {}
+        else:
+            self.server_data = {}
+
     async def _save_db(self) -> None:
         async with self.lock:
             async with aiofiles.open(self.db_file, "w", encoding="utf-8") as file:
@@ -128,6 +143,11 @@ class MemoryManager:
         async with self.lock:
             async with aiofiles.open(self.permanent_db_file, "w", encoding="utf-8") as file:
                 await file.write(json.dumps(self.permanent_data, ensure_ascii=False, indent=2))
+
+    async def _save_server_db(self) -> None:
+        async with self.lock:
+            async with aiofiles.open(self.server_memory_file, "w", encoding="utf-8") as file:
+                await file.write(json.dumps(self.server_data, ensure_ascii=False, indent=2))
 
     def _ensure_user(self, user_id: str, user_name: str | None = None) -> dict[str, Any]:
         uid = str(user_id)
@@ -232,6 +252,24 @@ class MemoryManager:
             return "無"
 
         return "\n".join(f"[{fact['id'][:8]}] {fact['content']}" for fact in facts)
+
+    def get_server_memory(self, guild_id: str | int | None) -> str:
+        if not guild_id:
+            return "無"
+
+        entry = self.server_data.get(str(guild_id), {})
+        memories = entry.get("memories", [])
+        if not memories:
+            return "無"
+
+        lines = []
+        for memory in memories[-80:]:
+            lines.append(
+                f"[{memory.get('id', '')[:8]}] "
+                f"{memory.get('date', '')} / {memory.get('type', '事件')}：{memory.get('content', '')}"
+            )
+
+        return _truncate_context("\n".join(lines))
 
     async def add_memory(self, user_id: str, content: str, user_name: str | None = None) -> None:
         profile = self._ensure_user(user_id, user_name)
@@ -344,6 +382,37 @@ class MemoryManager:
         self.permanent_data["facts"].append(new_fact)
         await self._save_permanent_db()
 
+    async def add_server_memory(
+        self,
+        guild_id: str | int | None,
+        guild_name: str,
+        memory_type: str,
+        content: str,
+    ) -> bool:
+        if not guild_id:
+            return False
+
+        content = content.strip()
+        if not content:
+            return False
+
+        key = str(guild_id)
+        entry = self.server_data.setdefault(key, {"guild_id": key, "guild_name": guild_name, "memories": []})
+        entry["guild_name"] = guild_name
+        memory = {
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "date": _now_date(),
+            "type": (memory_type or "事件").strip(),
+            "content": content,
+        }
+        if not any(
+            item.get("type") == memory["type"] and item.get("content") == memory["content"]
+            for item in entry["memories"]
+        ):
+            entry["memories"].append(memory)
+            await self._save_server_db()
+        return True
+
     async def update_memory(
         self,
         user_id: str,
@@ -437,6 +506,19 @@ class MemoryManager:
             if fact["id"].startswith(fact_id):
                 facts.pop(index)
                 await self._save_permanent_db()
+                return True
+
+        return False
+
+    async def delete_server_memory(self, guild_id: str | int | None, memory_id: str) -> bool:
+        if not guild_id:
+            return False
+
+        memories = self.server_data.get(str(guild_id), {}).get("memories", [])
+        for index, memory in enumerate(memories):
+            if memory.get("id", "").startswith(memory_id.strip()):
+                memories.pop(index)
+                await self._save_server_db()
                 return True
 
         return False
