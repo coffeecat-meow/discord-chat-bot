@@ -27,6 +27,7 @@ class Request:
     trigger_message_id: int | None = None
     attention_reason: str = ""
     original_message: str = ""
+    presence_context: str = ""
     allow_reminders: bool = True
     is_interaction: bool = field(init=False)
 

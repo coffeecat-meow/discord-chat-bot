@@ -28,6 +28,7 @@ from .message_context import (
     should_start_proactive,
 )
 from .models import Request
+from .presence import PresenceManager
 from .prompts import load_system_prompt
 from .scheduler import Scheduler
 from .short_term_memory import ShortTermMemoryManager
@@ -51,9 +52,11 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
 
     intents = discord.Intents.default()
     intents.message_content = True
+    intents.presences = True
     bot = commands.Bot(command_prefix="!", intents=intents)
 
     state = BotState()
+    presence_manager = PresenceManager(settings.presence_ttl_seconds, settings.presence_max_context_users)
     tool_stats_manager = ToolStatsManager(settings.tool_stats_file)
     invocation_logger = ConversationLogger(settings.invocation_log_file)
     llm_engine = OpenRouterLLM(
@@ -95,6 +98,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         settings.image_cache_ttl_seconds,
         settings.image_cache_max_items,
         settings.reminders_file,
+        presence_manager,
     )
 
     bot.sayuki = SimpleNamespace(
@@ -102,6 +106,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         state=state,
         llm_engine=llm_engine,
         memory_manager=memory_manager,
+        presence_manager=presence_manager,
         user_stats_manager=user_stats_manager,
         conversation_logger=conversation_logger,
         invocation_logger=invocation_logger,
@@ -278,6 +283,10 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             list(discord_refs.reply_targets.values()),
         )
         memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
+        presence_context = presence_manager.build_context(
+            getattr(interaction.guild, "id", None),
+            relevant_memory_user_ids,
+        )
         await short_memory_manager.digest_pending(
             llm_engine,
             interaction.channel.id,
@@ -301,6 +310,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             memory_context,
             memory_manager.get_permanent_memory(),
             memory_manager.get_server_memory(getattr(interaction.guild, "id", None)),
+            presence_context,
             short_memory_manager.build_context(interaction.channel.id, interaction.user.id),
             chat_history,
             state.stats,
@@ -346,6 +356,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         req.target_channel_name = getattr(interaction.channel, "name", str(interaction.channel.id))
         req.target_guild_id = getattr(interaction.guild, "id", None)
         req.target_guild_name = getattr(interaction.guild, "name", "")
+        req.presence_context = presence_context
         req.trigger_message_id = current_message.id
         req.attention_reason = "slash指令主動查看"
         req.original_message = f"管理員觸發主動查看。{note_text.strip()}" if note_text else "管理員觸發主動查看"
@@ -427,6 +438,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             f"頻道：#{getattr(interaction.channel, 'name', interaction.channel.id)} ({interaction.channel.id})",
             f"Bot成員：{member.display_name} ({member.id})",
             f"最高身分組：{member.top_role.name} (position:{member.top_role.position})",
+            f"Presence快取筆數：{len(presence_manager.records)}",
             "",
             _permission_line("Administrator", guild_perms.administrator),
             _permission_line("Send Messages", channel_perms.send_messages),
@@ -613,6 +625,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
     @bot.event
     async def on_ready():
         logger.info("Bot 就緒: %s", bot.user)
+        presence_manager.prime_from_guilds(list(bot.guilds))
         await memory_manager.init_db()
         await user_stats_manager.init_db()
         await tool_stats_manager.init_db()
@@ -629,9 +642,16 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 logger.error("slash command 同步失敗: %s", exc)
 
     @bot.event
+    async def on_presence_update(before: discord.Member, after: discord.Member):
+        presence_manager.update_member(after)
+
+    @bot.event
     async def on_message(message: discord.Message):
         if message.author.bot:
             return
+
+        if isinstance(message.author, discord.Member):
+            presence_manager.update_member(message.author)
 
         bot_user_id = bot.user.id
         cached_msgs = await get_cached_messages(message, state.channel_message_cache)
@@ -689,6 +709,10 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                     list(discord_refs.reply_targets.values()),
                 )
                 memory_context = memory_manager.get_relevant_memory_context(relevant_memory_user_ids)
+                presence_context = presence_manager.build_context(
+                    getattr(message.guild, "id", None),
+                    relevant_memory_user_ids,
+                )
                 await short_memory_manager.digest_pending(
                     llm_engine,
                     message.channel.id,
@@ -713,6 +737,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 memory_context,
                 memory_manager.get_permanent_memory(),
                 memory_manager.get_server_memory(getattr(message.guild, "id", None)),
+                presence_context,
                 short_memory_manager.build_context(message.channel.id, message.author.id),
                 chat_history,
                 state.stats,
@@ -755,6 +780,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 req.target_channel_name = getattr(message.channel, "name", str(message.channel.id))
                 req.target_guild_id = getattr(message.guild, "id", None)
                 req.target_guild_name = getattr(message.guild, "name", "")
+                req.presence_context = presence_context
                 req.trigger_message_id = message.id
                 req.attention_reason = attention_reason
                 req.original_message = log_message

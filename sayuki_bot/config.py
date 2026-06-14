@@ -41,6 +41,8 @@ class Settings:
     short_memory_max_context_chars: int
     image_cache_ttl_seconds: int
     image_cache_max_items: int
+    presence_ttl_seconds: int
+    presence_max_context_users: int
     conversation_log_file: Path
     invocation_log_file: Path
     tool_stats_file: Path
@@ -143,6 +145,8 @@ def load_settings() -> Settings:
         short_memory_max_context_chars=_env_int("SHORT_MEMORY_MAX_CONTEXT_CHARS", 5000),
         image_cache_ttl_seconds=_env_int("IMAGE_CACHE_TTL_SECONDS", 21600),
         image_cache_max_items=_env_int("IMAGE_CACHE_MAX_ITEMS", 500),
+        presence_ttl_seconds=_env_int("PRESENCE_TTL_SECONDS", 21600),
+        presence_max_context_users=_env_int("PRESENCE_MAX_CONTEXT_USERS", 8),
         conversation_log_file=_env_path("CONVERSATION_LOG_FILE", BASE_DIR / "logs" / "conversation.jsonl"),
         invocation_log_file=_env_path("INVOCATION_LOG_FILE", BASE_DIR / "logs" / "invocation.jsonl"),
         tool_stats_file=_env_path("TOOL_STATS_FILE", BASE_DIR / "tool_stats.json"),

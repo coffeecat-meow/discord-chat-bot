@@ -97,6 +97,8 @@ SHORT_MEMORY_MIN_INTERVAL_SECONDS=600
 SHORT_MEMORY_MAX_CONTEXT_CHARS=5000
 IMAGE_CACHE_TTL_SECONDS=21600
 IMAGE_CACHE_MAX_ITEMS=500
+PRESENCE_TTL_SECONDS=21600
+PRESENCE_MAX_CONTEXT_USERS=8
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
 INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
@@ -142,6 +144,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `[[SERVER_EVENT: event name | YYYY-MM-DD HH:MM | YYYY-MM-DD HH:MM | location | description]]`
 - `[[USER_STATS: user_id]]`
 - `[[LOOKUP_MEMORY: user_id]]`
+- `[[CHECK_PRESENCE: user_id]]`
 - `[[STATUS: text]]`
 
 完整工具列表請看 `SYSTEM_PROMPT.example.txt`。
@@ -184,6 +187,8 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 `memory.json` 使用結構化使用者 profile，可放單一 profile、profile 陣列，或 `{ "user_id": profile }` 形式。
 
 執行時只會完整附送目前情境相關使用者的記憶，例如目前對話者、近期頻道參與者、被提及的人、回覆目標，以及訊息連結解析出的作者。其他使用者只會附成精簡索引，模型需要時可用 `[[LOOKUP_MEMORY: user_id]]` 查完整 profile。
+
+Discord狀態會從gateway presence update快取，只會自動附送目前情境相關使用者。模型需要時也可用 `[[CHECK_PRESENCE: user_id]]` 查快取狀態。這需要在Discord Developer Portal啟用 Presence Intent。
 
 `server_memory.json` 儲存Discord伺服器專屬的梗、稱呼、黑歷史與重大事件。
 

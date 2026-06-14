@@ -538,6 +538,7 @@ def build_system_context(
     memory_context: str,
     permanent_memory: str,
     server_memory: str,
+    presence_context: str,
     short_term_context: str,
     chat_history: str,
     stats: BotStats,
@@ -556,6 +557,7 @@ def build_system_context(
         f"[相關使用者記憶與索引]\n{memory_context}\n\n"
         f"[你的永久記憶]\n{permanent_memory}\n\n"
         f"[目前伺服器記憶]\n{server_memory}\n\n"
+        f"[目前相關使用者Discord狀態]\n{presence_context}\n\n"
         f"[短期上下文摘要]\n{short_term_context}\n\n"
         f"[近期群組對話]\n{chat_history}"
     )

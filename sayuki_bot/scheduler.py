@@ -37,10 +37,11 @@ PING_TAG_RE = re.compile(r"\[\[PING:\s*(\d+)\s*\]\]")
 CHECK_ROLES_RE = re.compile(r"\[\[CHECK_ROLES:\s*(\d+)\s*\]\]")
 USER_STATS_RE = re.compile(r"\[\[USER_STATS:\s*(\d+)\s*\]\]")
 LOOKUP_MEMORY_RE = re.compile(r"\[\[LOOKUP_MEMORY:\s*(\d+)\s*\]\]")
+CHECK_PRESENCE_RE = re.compile(r"\[\[CHECK_PRESENCE:\s*(\d+)\s*\]\]")
 READ_WEB_RE = re.compile(r"\[\[READ_WEB:\s*(https?://.*?)\s*\]\]", flags=re.DOTALL)
 VIEW_IMAGE_RE = re.compile(r"\[\[VIEW_IMAGE:\s*#?(msg_\d{1,})\s*\]\]")
 QUERY_TOOL_RE = re.compile(
-    r"\[\[(?:VIEW_IMAGE:\s*#?msg_\d{1,}|CHECK_ROLES:\s*\d+|USER_STATS:\s*\d+|LOOKUP_MEMORY:\s*\d+|READ_WEB:\s*https?://.*?)\s*\]\]",
+    r"\[\[(?:VIEW_IMAGE:\s*#?msg_\d{1,}|CHECK_ROLES:\s*\d+|USER_STATS:\s*\d+|LOOKUP_MEMORY:\s*\d+|CHECK_PRESENCE:\s*\d+|READ_WEB:\s*https?://.*?)\s*\]\]",
     flags=re.DOTALL,
 )
 STATUS_RE = re.compile(r"\[\[STATUS:\s*(.*?)\s*\]\]", flags=re.DOTALL)
@@ -146,6 +147,7 @@ class Scheduler:
         image_cache_ttl_seconds: int = 21600,
         image_cache_max_items: int = 500,
         reminders_file: Path | None = None,
+        presence_mgr=None,
     ):
         self.queue = deque()
         self.llm = llm
@@ -160,6 +162,7 @@ class Scheduler:
         self.image_cache_ttl_seconds = image_cache_ttl_seconds
         self.image_cache_max_items = image_cache_max_items
         self.reminders_file = reminders_file
+        self.presence_mgr = presence_mgr
         self.last_debug_record: dict | None = None
         self.processing = False
         self.lock = asyncio.Lock()
@@ -207,6 +210,7 @@ class Scheduler:
             "user_name": req.target_user_name,
             "message_id": req.trigger_message_id,
             "original_message": _preview_text(req.original_message, 500),
+            "presence_context": _preview_text(req.presence_context, 800),
             "initial_response": "",
             "tool_rounds": [],
             "action_tools": [],
@@ -235,6 +239,7 @@ class Scheduler:
             f"是否NO_NEED：{'是' if record.get('no_need') else '否'}",
             f"指定回覆：{'是' if record.get('replied_to_message') else '否'}",
             f"原始訊息：{record.get('original_message', '')}",
+            f"附送Discord狀態：{record.get('presence_context', '') or '無'}",
             f"初次模型回覆：{record.get('initial_response', '')}",
         ]
 
@@ -1001,6 +1006,48 @@ class Scheduler:
 
         return "【系統完整記憶查詢結果】\n" + "\n\n".join(reports)
 
+    async def _build_presence_tool_report(
+        self,
+        raw_response: str,
+        interaction_obj,
+        tool_events: list[str] | None = None,
+    ) -> str:
+        matches = CHECK_PRESENCE_RE.findall(raw_response)
+        if not matches:
+            return ""
+
+        guild = self._guild_from_interaction(interaction_obj)
+        guild_id = getattr(guild, "id", None)
+        seen_user_ids: set[str] = set()
+        reports = []
+        for user_id in matches:
+            if user_id in seen_user_ids:
+                continue
+            seen_user_ids.add(user_id)
+            if tool_events is not None:
+                tool_events.append(f"CHECK_PRESENCE {user_id}")
+
+            started = perf_counter()
+            success = False
+            try:
+                if self.presence_mgr:
+                    result = self.presence_mgr.format_user(guild_id, user_id)
+                else:
+                    result = "系統尚未啟用Discord狀態快取。"
+                success = "快取中沒有" not in result and "尚未啟用" not in result
+                reports.append(f"Discord ID:{user_id}\n{result}")
+            except Exception as exc:
+                reports.append(f"Discord ID:{user_id}\n狀態查詢失敗：{exc}")
+            finally:
+                if self.tool_stats_mgr:
+                    await self.tool_stats_mgr.record_tool(
+                        "CHECK_PRESENCE",
+                        (perf_counter() - started) * 1000,
+                        success,
+                    )
+
+        return "【系統Discord狀態查詢結果】\n" + "\n\n".join(reports)
+
     async def _build_read_web_tool_report(
         self,
         raw_response: str,
@@ -1054,6 +1101,7 @@ class Scheduler:
                 await self._build_roles_tool_report(raw_response, interaction_obj, tool_events),
                 await self._build_user_stats_tool_report(raw_response, tool_events),
                 await self._build_memory_lookup_tool_report(raw_response, tool_events),
+                await self._build_presence_tool_report(raw_response, interaction_obj, tool_events),
                 await self._build_read_web_tool_report(raw_response, tool_events),
             ]
             filtered_reports = [report for report in reports if report]

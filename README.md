@@ -97,6 +97,8 @@ SHORT_MEMORY_MIN_INTERVAL_SECONDS=600
 SHORT_MEMORY_MAX_CONTEXT_CHARS=5000
 IMAGE_CACHE_TTL_SECONDS=21600
 IMAGE_CACHE_MAX_ITEMS=500
+PRESENCE_TTL_SECONDS=21600
+PRESENCE_MAX_CONTEXT_USERS=8
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
 INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
@@ -142,6 +144,7 @@ The model can emit hidden tool tags such as:
 - `[[SERVER_EVENT: event name | YYYY-MM-DD HH:MM | YYYY-MM-DD HH:MM | location | description]]`
 - `[[USER_STATS: user_id]]`
 - `[[LOOKUP_MEMORY: user_id]]`
+- `[[CHECK_PRESENCE: user_id]]`
 - `[[STATUS: text]]`
 
 See `SYSTEM_PROMPT.example.txt` for the full tool list.
@@ -184,6 +187,8 @@ Runtime files are ignored by git:
 `memory.json` stores structured user profiles. It can be a single profile, a list of profiles, or a mapping of `{ "user_id": profile }`.
 
 At runtime, the bot injects full memory only for users related to the current context, such as the current speaker, recent channel participants, mentioned users, reply targets, and resolved message-link authors. Other profiles are injected as a compact index, and the model can request a full profile with `[[LOOKUP_MEMORY: user_id]]`.
+
+Discord presence/status is cached from gateway presence updates and injected only for users related to the current context. The model can request a cached user status with `[[CHECK_PRESENCE: user_id]]`. Enable the Presence Intent in the Discord Developer Portal for this to work.
 
 `server_memory.json` stores Discord-server-specific jokes, nicknames, running gags, and important server events.
 

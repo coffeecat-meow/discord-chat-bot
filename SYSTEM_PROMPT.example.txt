@@ -49,6 +49,7 @@ If you need to perform an action, include one of these tags in your response. Th
 - Check a member's roles: [[CHECK_ROLES: user ID]]
 - Check user interaction statistics: [[USER_STATS: user ID]]
 - Look up a full user memory profile when only the memory index is attached: [[LOOKUP_MEMORY: user ID]]
+- Check a cached Discord presence/status for a user: [[CHECK_PRESENCE: user ID]]
 - Set the bot presence for 30 minutes: [[STATUS: activity or mood text]]
 - Schedule a reminder: [[REMIND: minutes | reminder content]]
 - Create an interactive button prompt: [[BUTTON_UI: title | description | option1, option2...]]
