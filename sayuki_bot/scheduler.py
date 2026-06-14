@@ -145,6 +145,7 @@ class Scheduler:
         self.presence_schedule_task: asyncio.Task | None = None
         self.interrupt_generation = 0
         self.interrupt_event = asyncio.Event()
+        self.active_reminder_keys: set[tuple[str, int | None, int | None, float, str]] = set()
 
     def prune_image_cache(self, cache: dict[int, str], cache_times: dict[int, datetime]) -> None:
         if not cache:
@@ -1158,34 +1159,40 @@ class Scheduler:
         original_message: str,
         interaction_obj,
         context_messages: list,
+        reminder_key: tuple[str, int | None, int | None, float, str],
     ) -> None:
-        await asyncio.sleep(wait_minutes * 60)
+        try:
+            await asyncio.sleep(wait_minutes * 60)
 
-        remind_context = (
-            f"\n\n【定時提醒時間到】\n"
-            f"- 使用者「{user_name}」設定提醒時的話：{original_message}\n"
-            f"- 提醒內容：{content}\n"
-            f"請根據以上資訊與下方的歷史紀錄，嚴格遵守你的 <rules>，用語氣自然地告訴使用者這件事。"
-        )
+            remind_context = (
+                f"\n\n【定時提醒時間到】\n"
+                f"- 使用者「{user_name}」設定提醒時的話：{original_message}\n"
+                f"- 提醒內容：{content}\n"
+                "請根據以上資訊與下方的歷史紀錄，嚴格遵守你的 <rules>，用語氣自然地告訴使用者這件事。\n"
+                "這是提醒送達，不要再次使用 [[REMIND]]。"
+            )
 
-        new_messages = context_messages.copy()
-        new_messages.append({"role": "system", "content": remind_context})
+            new_messages = context_messages.copy()
+            new_messages.append({"role": "system", "content": remind_context})
 
-        new_req = Request(new_messages, interaction_obj, is_proactive=True, prefix_text=f"<@{target_uid}>")
-        new_req.target_user_id = int(target_uid) if target_uid.isdigit() else None
-        new_req.target_user_name = user_name
-        new_req.target_channel_id = getattr(interaction_obj.channel, "id", None)
-        new_req.target_channel_name = getattr(
-            interaction_obj.channel,
-            "name",
-            str(getattr(interaction_obj.channel, "id", "")),
-        )
-        new_req.target_guild_id = getattr(getattr(interaction_obj, "guild", None), "id", None)
-        new_req.target_guild_name = getattr(getattr(interaction_obj, "guild", None), "name", "")
-        new_req.trigger_message_id = getattr(interaction_obj, "id", None)
-        new_req.attention_reason = "定時提醒"
-        new_req.original_message = f"定時提醒：{content}"
-        await self.add_request(new_req)
+            new_req = Request(new_messages, interaction_obj, is_proactive=True, prefix_text=f"<@{target_uid}>")
+            new_req.allow_reminders = False
+            new_req.target_user_id = int(target_uid) if target_uid.isdigit() else None
+            new_req.target_user_name = user_name
+            new_req.target_channel_id = getattr(interaction_obj.channel, "id", None)
+            new_req.target_channel_name = getattr(
+                interaction_obj.channel,
+                "name",
+                str(getattr(interaction_obj.channel, "id", "")),
+            )
+            new_req.target_guild_id = getattr(getattr(interaction_obj, "guild", None), "id", None)
+            new_req.target_guild_name = getattr(getattr(interaction_obj, "guild", None), "name", "")
+            new_req.trigger_message_id = getattr(interaction_obj, "id", None)
+            new_req.attention_reason = "定時提醒"
+            new_req.original_message = f"定時提醒：{content}"
+            await self.add_request(new_req)
+        finally:
+            self.active_reminder_keys.discard(reminder_key)
 
     async def handle_request(self, req: Request) -> None:
         interaction_obj = req.interaction_obj
@@ -1506,6 +1513,9 @@ class Scheduler:
                     await self.tool_stats_mgr.record_tool("REACT", (perf_counter() - started) * 1000, success)
 
     async def _schedule_reminder(self, raw_response: str, req: Request, interaction_obj) -> None:
+        if not req.allow_reminders:
+            return
+
         remind_match = re.search(r"\[\[REMIND:\s*(\d+\.?\d*)\s*\|\s*(.*?)\s*\]\]", raw_response, flags=re.DOTALL)
         if not remind_match:
             return
@@ -1515,7 +1525,19 @@ class Scheduler:
         try:
             minutes = float(remind_match.group(1))
             remind_content = remind_match.group(2).strip()
+            if minutes <= 0 or not remind_content:
+                logger.warning("提醒設定失敗，分鐘數或內容無效: %s / %s", minutes, remind_content)
+                return
+
             target_uid = str(interaction_obj.author.id) if not req.is_interaction else str(interaction_obj.user.id)
+            channel_id = req.target_channel_id or getattr(interaction_obj.channel, "id", None)
+            message_id = req.trigger_message_id or getattr(interaction_obj, "id", None)
+            reminder_key = (target_uid, channel_id, message_id, round(minutes, 4), remind_content)
+            if reminder_key in self.active_reminder_keys:
+                logger.info("略過重複提醒: %s 分鐘後 - %s", minutes, remind_content)
+                return
+
+            self.active_reminder_keys.add(reminder_key)
             asyncio.create_task(
                 self._bg_reminder_task(
                     minutes,
@@ -1525,6 +1547,7 @@ class Scheduler:
                     req.original_message,
                     interaction_obj,
                     req.messages,
+                    reminder_key,
                 )
             )
             success = True
