@@ -72,6 +72,7 @@ OPENROUTER_USE_REASONING_EFFORT=false
 OPENROUTER_REASONING_EFFORT=medium
 ADMIN_USER_IDS=123456789012345678
 DEVELOPER_USER_IDS=123456789012345678
+COMMAND_SYNC_GUILD_IDS=
 ```
 
 編輯 `SYSTEM_PROMPT.txt`，在 role 區塊填入你自己的角色設定。
@@ -99,6 +100,10 @@ IMAGE_CACHE_TTL_SECONDS=21600
 IMAGE_CACHE_MAX_ITEMS=500
 PRESENCE_TTL_SECONDS=21600
 PRESENCE_MAX_CONTEXT_USERS=8
+PRESENCE_MAX_AGE_SECONDS=86400
+PRESENCE_CLEANUP_INTERVAL_SECONDS=3600
+DISCORD_COMPONENT_CACHE_TTL_SECONDS=30
+DISCORD_COMPONENT_CACHE_MAX_ITEMS=500
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
 INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
@@ -110,6 +115,8 @@ MAX_MEMORY_CONTEXT_CHARS=120000
 `OPENROUTER_USE_REASONING_EFFORT=true` 時，只會對文字模型送出 `reasoning.effort`，VL模型不會套用。若模型不支援effort level，請維持 `false`。`OPENROUTER_REASONING_EFFORT` 通常可填 `low`、`medium`、`high`。
 
 `OPENROUTER_SMALL_MODEL` 用於 bot 被呼叫時的短期記憶消化。若未設定，會沿用 `OPENROUTER_MODEL`。
+
+`COMMAND_SYNC_GUILD_IDS` 可留空使用全域 slash command 同步；開發時可填一個或多個伺服器ID，用逗號分隔，讓指令同步更快生效。如果改用guild同步後舊的全域指令還留在Discord列表裡，請留空跑一次全域同步，或到Discord Developer Portal刪掉舊指令。
 
 ## 網頁搜尋
 
@@ -153,21 +160,23 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 
 只有列在 `ADMIN_USER_IDS` 的 Discord 使用者 ID 可以使用。指令回覆都是 ephemeral，只有執行者看得到。
 
-- `/sayuki_look [note]`：讓 bot 主動查看目前頻道
-- `/sayuki_interrupt`：清除佇列並停止尚未輸出的分段訊息
-- `/sayuki_status`：查看佇列與發言統計
-- `/sayuki_permissions`：診斷目前頻道/伺服器中的bot權限
-- `/sayuki_tool_stats`：查看工具呼叫、失敗次數與平均耗時
-- `/sayuki_debug_last`：查看最近一次處理/debug摘要
-- `/sayuki_logs [kind] [day] [limit]`：查看對話、LLM調用或短期記憶紀錄
-- `/sayuki_reminders [limit]`：查看待觸發提醒
-- `/sayuki_cancel_reminder reminder_id`：取消待觸發提醒
-- `/sayuki_clear_status`：清空 bot 動態狀態
-- `/sayuki_reload_prompt`：重新讀取 `SYSTEM_PROMPT.txt`
-- `/sayuki_memory_user user_id`：查看指定使用者記憶
-- `/sayuki_memory_permanent`：查看永久記憶
-- `/sayuki_memory_server`：查看目前伺服器記憶
-- `/sayuki_user_stats user_id`：查看指定使用者互動統計
+所有管理指令都集中在 `/sayuki` 底下，避免Discord slash command列表被大量`sayuki_`頂層指令洗版。
+
+- `/sayuki look [note]`：讓 bot 主動查看目前頻道
+- `/sayuki interrupt`：清除佇列並停止尚未輸出的分段訊息
+- `/sayuki status`：查看佇列與發言統計
+- `/sayuki permissions`：診斷目前頻道/伺服器中的bot權限
+- `/sayuki tool_stats`：查看工具呼叫、失敗次數與平均耗時
+- `/sayuki debug_last`：查看最近一次處理/debug摘要
+- `/sayuki logs [kind] [day] [limit]`：查看對話、LLM調用或短期記憶紀錄
+- `/sayuki reminders [limit]`：查看待觸發提醒
+- `/sayuki cancel_reminder reminder_id`：取消待觸發提醒
+- `/sayuki clear_status`：清空 bot 動態狀態
+- `/sayuki reload_prompt`：重新讀取 `SYSTEM_PROMPT.txt`
+- `/sayuki memory_user user_id`：查看指定使用者記憶
+- `/sayuki memory_permanent`：查看永久記憶
+- `/sayuki memory_server`：查看目前伺服器記憶
+- `/sayuki user_stats user_id`：查看指定使用者互動統計
 
 ## 記憶檔案
 
@@ -188,7 +197,9 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 
 執行時只會完整附送目前情境相關使用者的記憶，例如目前對話者、近期頻道參與者、被提及的人、回覆目標，以及訊息連結解析出的作者。其他使用者只會附成精簡索引，模型需要時可用 `[[LOOKUP_MEMORY: user_id]]` 查完整 profile。
 
-Discord狀態會從gateway presence update快取，只會自動附送目前情境相關使用者。模型需要時也可用 `[[CHECK_PRESENCE: user_id]]` 查快取狀態。這需要在Discord Developer Portal啟用 Presence Intent。
+Discord狀態會從gateway presence update快取，只會自動附送目前情境相關使用者。模型需要時也可用 `[[CHECK_PRESENCE: user_id]]` 查快取狀態。這需要在Discord Developer Portal啟用 Presence Intent。`PRESENCE_MAX_AGE_SECONDS` 與 `PRESENCE_CLEANUP_INTERVAL_SECONDS` 控制過期快取清理。
+
+Discord投票、Embed面板、按鈕、選單與討論串預覽會轉成文字附給模型。轉換結果會用 `DISCORD_COMPONENT_CACHE_TTL_SECONDS` 短暫快取，並由 `DISCORD_COMPONENT_CACHE_MAX_ITEMS` 限制筆數。
 
 `server_memory.json` 儲存Discord伺服器專屬的梗、稱呼、黑歷史與重大事件。
 

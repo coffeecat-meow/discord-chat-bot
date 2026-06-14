@@ -72,6 +72,7 @@ OPENROUTER_USE_REASONING_EFFORT=false
 OPENROUTER_REASONING_EFFORT=medium
 ADMIN_USER_IDS=123456789012345678
 DEVELOPER_USER_IDS=123456789012345678
+COMMAND_SYNC_GUILD_IDS=
 ```
 
 Edit `SYSTEM_PROMPT.txt` and replace the role section with your bot persona.
@@ -99,6 +100,10 @@ IMAGE_CACHE_TTL_SECONDS=21600
 IMAGE_CACHE_MAX_ITEMS=500
 PRESENCE_TTL_SECONDS=21600
 PRESENCE_MAX_CONTEXT_USERS=8
+PRESENCE_MAX_AGE_SECONDS=86400
+PRESENCE_CLEANUP_INTERVAL_SECONDS=3600
+DISCORD_COMPONENT_CACHE_TTL_SECONDS=30
+DISCORD_COMPONENT_CACHE_MAX_ITEMS=500
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
 INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
@@ -110,6 +115,8 @@ MAX_MEMORY_CONTEXT_CHARS=120000
 `OPENROUTER_USE_REASONING_EFFORT=true` sends `reasoning.effort` to the text model only. Leave it `false` for models that do not support reasoning effort. `OPENROUTER_REASONING_EFFORT` is usually `low`, `medium`, or `high`.
 
 `OPENROUTER_SMALL_MODEL` is used for short-term memory digestion when the bot is invoked. If it is omitted, the bot uses `OPENROUTER_MODEL`.
+
+`COMMAND_SYNC_GUILD_IDS` is optional. Leave it empty for global slash command sync, or set one or more guild IDs for faster development sync, separated by commas. If old global commands remain visible after moving to guild sync, run once with this setting empty or remove the old commands from the Discord Developer Portal.
 
 ## Web Search
 
@@ -153,21 +160,23 @@ See `SYSTEM_PROMPT.example.txt` for the full tool list.
 
 Only Discord user IDs listed in `ADMIN_USER_IDS` can use these commands. Command responses are ephemeral.
 
-- `/sayuki_look [note]` - ask the bot to proactively inspect the current channel
-- `/sayuki_interrupt` - clear queued requests and stop unsent split output
-- `/sayuki_status` - show queue and message stats
-- `/sayuki_permissions` - diagnose bot permissions in the current channel/server
-- `/sayuki_tool_stats` - inspect tool calls, failures, and average durations
-- `/sayuki_debug_last` - show the latest processing/debug summary
-- `/sayuki_logs [kind] [day] [limit]` - inspect conversation, LLM invocation, or short-term memory logs
-- `/sayuki_reminders [limit]` - inspect pending reminders
-- `/sayuki_cancel_reminder reminder_id` - cancel a pending reminder
-- `/sayuki_clear_status` - clear the bot presence
-- `/sayuki_reload_prompt` - reload `SYSTEM_PROMPT.txt`
-- `/sayuki_memory_user user_id` - inspect a user's memory
-- `/sayuki_memory_permanent` - inspect permanent bot memory
-- `/sayuki_memory_server` - inspect memory for the current Discord server
-- `/sayuki_user_stats user_id` - inspect user interaction statistics
+All admin commands are grouped under `/sayuki` to avoid flooding the slash-command list.
+
+- `/sayuki look [note]` - ask the bot to proactively inspect the current channel
+- `/sayuki interrupt` - clear queued requests and stop unsent split output
+- `/sayuki status` - show queue and message stats
+- `/sayuki permissions` - diagnose bot permissions in the current channel/server
+- `/sayuki tool_stats` - inspect tool calls, failures, and average durations
+- `/sayuki debug_last` - show the latest processing/debug summary
+- `/sayuki logs [kind] [day] [limit]` - inspect conversation, LLM invocation, or short-term memory logs
+- `/sayuki reminders [limit]` - inspect pending reminders
+- `/sayuki cancel_reminder reminder_id` - cancel a pending reminder
+- `/sayuki clear_status` - clear the bot presence
+- `/sayuki reload_prompt` - reload `SYSTEM_PROMPT.txt`
+- `/sayuki memory_user user_id` - inspect a user's memory
+- `/sayuki memory_permanent` - inspect permanent bot memory
+- `/sayuki memory_server` - inspect memory for the current Discord server
+- `/sayuki user_stats user_id` - inspect user interaction statistics
 
 ## Memory Files
 
@@ -188,7 +197,9 @@ Runtime files are ignored by git:
 
 At runtime, the bot injects full memory only for users related to the current context, such as the current speaker, recent channel participants, mentioned users, reply targets, and resolved message-link authors. Other profiles are injected as a compact index, and the model can request a full profile with `[[LOOKUP_MEMORY: user_id]]`.
 
-Discord presence/status is cached from gateway presence updates and injected only for users related to the current context. The model can request a cached user status with `[[CHECK_PRESENCE: user_id]]`. Enable the Presence Intent in the Discord Developer Portal for this to work.
+Discord presence/status is cached from gateway presence updates and injected only for users related to the current context. The model can request a cached user status with `[[CHECK_PRESENCE: user_id]]`. Enable the Presence Intent in the Discord Developer Portal for this to work. `PRESENCE_MAX_AGE_SECONDS` and `PRESENCE_CLEANUP_INTERVAL_SECONDS` control stale cache cleanup.
+
+Discord polls, embeds, buttons, menus, and thread previews are converted into text for the model. This conversion is briefly cached with `DISCORD_COMPONENT_CACHE_TTL_SECONDS` and capped by `DISCORD_COMPONENT_CACHE_MAX_ITEMS`.
 
 `server_memory.json` stores Discord-server-specific jokes, nicknames, running gags, and important server events.
 

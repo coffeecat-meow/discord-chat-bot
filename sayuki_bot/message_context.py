@@ -359,7 +359,23 @@ async def build_discord_component_context(
     message: discord.Message,
     creator_label: str,
     user_labels: dict[int, str] | None = None,
+    component_context_cache: dict[int, str] | None = None,
+    component_context_cache_times: dict[int, datetime] | None = None,
+    component_cache_ttl_seconds: int = 30,
+    component_cache_max_items: int = 500,
 ) -> str:
+    now = datetime.now(TW_TZ)
+    cache_key = getattr(message, "id", None)
+    if (
+        cache_key is not None
+        and component_context_cache is not None
+        and component_context_cache_times is not None
+        and component_cache_ttl_seconds > 0
+    ):
+        cached_at = component_context_cache_times.get(cache_key)
+        if cached_at and (now - cached_at).total_seconds() <= component_cache_ttl_seconds:
+            return component_context_cache.get(cache_key, "")
+
     user_labels = user_labels or {}
     blocks = []
 
@@ -378,7 +394,31 @@ async def build_discord_component_context(
 
     context = "\n".join(blocks)
     if len(context) > MAX_DISCORD_COMPONENT_CONTEXT_CHARS:
-        return context[:MAX_DISCORD_COMPONENT_CONTEXT_CHARS] + "\n...（Discord元件內容過長，已截斷）"
+        context = context[:MAX_DISCORD_COMPONENT_CONTEXT_CHARS] + "\n...（Discord元件內容過長，已截斷）"
+
+    if (
+        context
+        and cache_key is not None
+        and component_context_cache is not None
+        and component_context_cache_times is not None
+        and component_cache_ttl_seconds > 0
+    ):
+        component_context_cache[cache_key] = context
+        component_context_cache_times[cache_key] = now
+        for key, cached_at in list(component_context_cache_times.items()):
+            if (now - cached_at).total_seconds() > component_cache_ttl_seconds:
+                component_context_cache.pop(key, None)
+                component_context_cache_times.pop(key, None)
+        if component_cache_max_items > 0 and len(component_context_cache) > component_cache_max_items:
+            overflow = len(component_context_cache) - component_cache_max_items
+            oldest_keys = sorted(
+                component_context_cache,
+                key=lambda key: component_context_cache_times.get(key, now),
+            )[:overflow]
+            for key in oldest_keys:
+                component_context_cache.pop(key, None)
+                component_context_cache_times.pop(key, None)
+
     return context
 
 
@@ -460,6 +500,10 @@ async def build_chat_history(
     bot_user_id: int,
     is_proactive: bool,
     vl_description_cache: dict[int, str],
+    component_context_cache: dict[int, str] | None = None,
+    component_context_cache_times: dict[int, datetime] | None = None,
+    component_cache_ttl_seconds: int = 30,
+    component_cache_max_items: int = 500,
 ) -> str:
     chat_history = ""
     user_labels = {
@@ -498,7 +542,15 @@ async def build_chat_history(
                 attachment_info = f" {attachment_info}"
 
         content = f"{reply_marker}{content}{attachment_info}"
-        component_context = await build_discord_component_context(msg, sender, user_labels)
+        component_context = await build_discord_component_context(
+            msg,
+            sender,
+            user_labels,
+            component_context_cache,
+            component_context_cache_times,
+            component_cache_ttl_seconds,
+            component_cache_max_items,
+        )
         if component_context:
             content = f"{content}\n{component_context}".strip()
 

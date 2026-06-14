@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 import re
@@ -56,7 +57,11 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
     bot = commands.Bot(command_prefix="!", intents=intents)
 
     state = BotState()
-    presence_manager = PresenceManager(settings.presence_ttl_seconds, settings.presence_max_context_users)
+    presence_manager = PresenceManager(
+        settings.presence_ttl_seconds,
+        settings.presence_max_context_users,
+        settings.presence_max_age_seconds,
+    )
     tool_stats_manager = ToolStatsManager(settings.tool_stats_file)
     invocation_logger = ConversationLogger(settings.invocation_log_file)
     llm_engine = OpenRouterLLM(
@@ -115,6 +120,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         scheduler=scheduler,
         system_prompt=system_prompt,
         commands_synced=False,
+        presence_cleanup_task=None,
     )
 
     def _is_admin(user_id: int) -> bool:
@@ -256,6 +262,13 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 '{"important_events":[{"date":"系統設定","event":"這位user是你的開發者","type":"身份"}]}',
             )
 
+    async def _presence_cleanup_loop() -> None:
+        while True:
+            await asyncio.sleep(settings.presence_cleanup_interval_seconds)
+            removed = presence_manager.cleanup_expired()
+            if removed:
+                logger.info("已清理 %s 筆過期Discord狀態快取", removed)
+
     async def _enqueue_proactive_from_interaction(
         interaction: discord.Interaction,
         note: str | None = None,
@@ -275,7 +288,15 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         current_message = history_msgs[-1]
         cached_msgs = history_msgs
         reference_text = "\n".join(msg.content for msg in history_msgs[-settings.history_limit:])
-        discord_refs = await resolve_discord_references(bot, current_message, reference_text)
+        discord_refs = await resolve_discord_references(
+            bot,
+            current_message,
+            reference_text,
+            component_context_cache=state.discord_component_context_cache,
+            component_context_cache_times=state.discord_component_context_cache_times,
+            component_cache_ttl_seconds=settings.discord_component_cache_ttl_seconds,
+            component_cache_max_items=settings.discord_component_cache_max_items,
+        )
         relevant_memory_user_ids = _collect_relevant_memory_user_ids(
             interaction.user.id,
             history_msgs,
@@ -302,6 +323,10 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             bot_user_id,
             True,
             state.vl_description_cache,
+            state.discord_component_context_cache,
+            state.discord_component_context_cache_times,
+            settings.discord_component_cache_ttl_seconds,
+            settings.discord_component_cache_max_items,
         )
         sys_info = build_system_context(
             interaction.user.display_name,
@@ -365,7 +390,9 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
 
         return True, f"已觸發主動查看，佇列中目前約 {len(scheduler.queue)} 筆"
 
-    @bot.tree.command(name="sayuki_look", description="管理員限定：讓紗月主動查看目前頻道")
+    sayuki_group = app_commands.Group(name="sayuki", description="管理員限定：紗月管理指令")
+
+    @sayuki_group.command(name="look", description="讓紗月主動查看目前頻道")
     @app_commands.describe(note="可選，補充一句想讓紗月留意的內容")
     async def sayuki_look(interaction: discord.Interaction, note: str | None = None):
         if not _is_admin(interaction.user.id):
@@ -377,7 +404,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         prefix = "成功" if ok else "失敗"
         await interaction.followup.send(f"{prefix}：{message}", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_interrupt", description="管理員限定：清除佇列並打斷紗月尚未輸出的回覆")
+    @sayuki_group.command(name="interrupt", description="清除佇列並打斷紗月尚未輸出的回覆")
     async def sayuki_interrupt(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -389,7 +416,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="sayuki_status", description="管理員限定：查看紗月目前狀態")
+    @sayuki_group.command(name="status", description="查看紗月目前狀態")
     async def sayuki_status(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -405,13 +432,18 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                     f"本月回覆：{bot_message_counts['month']}",
                     f"永久回覆：{bot_message_counts['total']}",
                     f"圖片快取：{len(state.vl_description_cache)} / {settings.image_cache_max_items}",
+                    (
+                        "Discord元件快取："
+                        f"{len(state.discord_component_context_cache)} / "
+                        f"{settings.discord_component_cache_max_items}"
+                    ),
                     f"已同步指令：{'是' if bot.sayuki.commands_synced else '否'}",
                 ]
             ),
             ephemeral=True,
         )
 
-    @bot.tree.command(name="sayuki_permissions", description="管理員限定：診斷bot目前頻道/伺服器權限")
+    @sayuki_group.command(name="permissions", description="診斷bot目前頻道/伺服器權限")
     async def sayuki_permissions(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -439,6 +471,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             f"Bot成員：{member.display_name} ({member.id})",
             f"最高身分組：{member.top_role.name} (position:{member.top_role.position})",
             f"Presence快取筆數：{len(presence_manager.records)}",
+            f"Discord元件快取筆數：{len(state.discord_component_context_cache)}",
             "",
             _permission_line("Administrator", guild_perms.administrator),
             _permission_line("Send Messages", channel_perms.send_messages),
@@ -457,7 +490,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         ]
         await interaction.response.send_message(f"```text\n{chr(10).join(lines)}\n```", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_tool_stats", description="管理員限定：查看工具使用統計")
+    @sayuki_group.command(name="tool_stats", description="查看工具使用統計")
     async def sayuki_tool_stats(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -468,7 +501,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             stats_text = stats_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{stats_text}\n```", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_debug_last", description="管理員限定：查看最近一次處理debug摘要")
+    @sayuki_group.command(name="debug_last", description="查看最近一次處理debug摘要")
     async def sayuki_debug_last(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -479,7 +512,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             debug_text = debug_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{debug_text}\n```", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_logs", description="管理員限定：查看bot紀錄")
+    @sayuki_group.command(name="logs", description="查看bot紀錄")
     @app_commands.describe(
         kind="紀錄分類：all/conversation/llm/short_memory",
         day="可選，YYYY-MM-DD，例如 2026-06-10",
@@ -512,7 +545,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         entries = await _read_log_entries(kind, day, limit)
         await _send_log_entries(interaction, entries, kind, day)
 
-    @bot.tree.command(name="sayuki_reminders", description="管理員限定：查看待觸發提醒")
+    @sayuki_group.command(name="reminders", description="查看待觸發提醒")
     @app_commands.describe(limit="最多顯示幾筆，1到50")
     async def sayuki_reminders(interaction: discord.Interaction, limit: int = 20):
         if not _is_admin(interaction.user.id):
@@ -524,7 +557,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             reminders_text = reminders_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{reminders_text}\n```", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_cancel_reminder", description="管理員限定：取消待觸發提醒")
+    @sayuki_group.command(name="cancel_reminder", description="取消待觸發提醒")
     @app_commands.describe(reminder_id="提醒ID，可只貼前幾碼")
     async def sayuki_cancel_reminder(interaction: discord.Interaction, reminder_id: str):
         if not _is_admin(interaction.user.id):
@@ -535,7 +568,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         message = "已取消提醒" if ok else "找不到符合的提醒ID"
         await interaction.response.send_message(message, ephemeral=True)
 
-    @bot.tree.command(name="sayuki_clear_status", description="管理員限定：清空紗月目前動態狀態")
+    @sayuki_group.command(name="clear_status", description="清空紗月目前動態狀態")
     async def sayuki_clear_status(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -544,7 +577,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         await scheduler.clear_presence()
         await interaction.response.send_message("已清空動態狀態", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_reload_prompt", description="管理員限定：重新讀取 SYSTEM_PROMPT")
+    @sayuki_group.command(name="reload_prompt", description="重新讀取SYSTEM_PROMPT")
     async def sayuki_reload_prompt(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -553,7 +586,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         bot.sayuki.system_prompt = load_system_prompt(settings.system_prompt_path)
         await interaction.response.send_message(f"已重新載入：{settings.system_prompt_path}", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_memory_user", description="管理員限定：查看指定使用者記憶")
+    @sayuki_group.command(name="memory_user", description="查看指定使用者記憶")
     @app_commands.describe(user_id="Discord 使用者ID，或直接貼使用者mention")
     async def sayuki_memory_user(interaction: discord.Interaction, user_id: str):
         if not _is_admin(interaction.user.id):
@@ -570,7 +603,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             memory_text = memory_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```json\n{memory_text}\n```", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_memory_permanent", description="管理員限定：查看永久記憶")
+    @sayuki_group.command(name="memory_permanent", description="查看永久記憶")
     async def sayuki_memory_permanent(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -581,7 +614,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             memory_text = memory_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{memory_text}\n```", ephemeral=True)
 
-    @bot.tree.command(name="sayuki_memory_server", description="管理員限定：查看目前伺服器記憶")
+    @sayuki_group.command(name="memory_server", description="查看目前伺服器記憶")
     async def sayuki_memory_server(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
             await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
@@ -605,7 +638,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="sayuki_user_stats", description="管理員限定：查看指定使用者互動統計")
+    @sayuki_group.command(name="user_stats", description="查看指定使用者互動統計")
     @app_commands.describe(user_id="Discord 使用者ID，或直接貼使用者mention")
     async def sayuki_user_stats(interaction: discord.Interaction, user_id: str):
         if not _is_admin(interaction.user.id):
@@ -622,10 +655,17 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             stats_text = stats_text[:1900] + "\n...（過長已截斷）"
         await interaction.response.send_message(f"```text\n{stats_text}\n```", ephemeral=True)
 
+    bot.tree.add_command(sayuki_group)
+
     @bot.event
     async def on_ready():
         logger.info("Bot 就緒: %s", bot.user)
         presence_manager.prime_from_guilds(list(bot.guilds))
+        removed = presence_manager.cleanup_expired()
+        if removed:
+            logger.info("已清理 %s 筆過期Discord狀態快取", removed)
+        if settings.presence_cleanup_interval_seconds > 0 and not bot.sayuki.presence_cleanup_task:
+            bot.sayuki.presence_cleanup_task = asyncio.create_task(_presence_cleanup_loop())
         await memory_manager.init_db()
         await user_stats_manager.init_db()
         await tool_stats_manager.init_db()
@@ -635,9 +675,19 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         await scheduler.init_reminders()
         if not bot.sayuki.commands_synced:
             try:
-                synced = await bot.tree.sync()
+                if settings.command_sync_guild_ids:
+                    total_synced = 0
+                    for guild_id in settings.command_sync_guild_ids:
+                        guild_obj = discord.Object(id=guild_id)
+                        bot.tree.copy_global_to(guild=guild_obj)
+                        synced = await bot.tree.sync(guild=guild_obj)
+                        total_synced += len(synced)
+                        logger.info("已同步 %s 個 guild slash command 到 %s", len(synced), guild_id)
+                    logger.info("已同步 %s 個 guild slash command", total_synced)
+                else:
+                    synced = await bot.tree.sync()
+                    logger.info("已同步 %s 個 slash command", len(synced))
                 bot.sayuki.commands_synced = True
-                logger.info("已同步 %s 個 slash command", len(synced))
             except Exception as exc:
                 logger.error("slash command 同步失敗: %s", exc)
 
@@ -701,7 +751,15 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                 )
 
                 history_msgs = cached_msgs[-settings.history_limit:]
-                discord_refs = await resolve_discord_references(bot, message, message.content)
+                discord_refs = await resolve_discord_references(
+                    bot,
+                    message,
+                    message.content,
+                    component_context_cache=state.discord_component_context_cache,
+                    component_context_cache_times=state.discord_component_context_cache_times,
+                    component_cache_ttl_seconds=settings.discord_component_cache_ttl_seconds,
+                    component_cache_max_items=settings.discord_component_cache_max_items,
+                )
                 relevant_memory_user_ids = _collect_relevant_memory_user_ids(
                     message.author.id,
                     history_msgs,
@@ -728,19 +786,23 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                     bot_user_id,
                     is_proactive,
                     state.vl_description_cache,
+                    state.discord_component_context_cache,
+                    state.discord_component_context_cache_times,
+                    settings.discord_component_cache_ttl_seconds,
+                    settings.discord_component_cache_max_items,
                 )
 
                 sys_info = build_system_context(
                     user_name,
                     message.author.id,
                     attention_reason,
-                memory_context,
-                memory_manager.get_permanent_memory(),
-                memory_manager.get_server_memory(getattr(message.guild, "id", None)),
-                presence_context,
-                short_memory_manager.build_context(message.channel.id, message.author.id),
-                chat_history,
-                state.stats,
+                    memory_context,
+                    memory_manager.get_permanent_memory(),
+                    memory_manager.get_server_memory(getattr(message.guild, "id", None)),
+                    presence_context,
+                    short_memory_manager.build_context(message.channel.id, message.author.id),
+                    chat_history,
+                    state.stats,
                     is_proactive,
                 )
 

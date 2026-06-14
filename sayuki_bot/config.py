@@ -43,10 +43,15 @@ class Settings:
     image_cache_max_items: int
     presence_ttl_seconds: int
     presence_max_context_users: int
+    presence_max_age_seconds: int
+    presence_cleanup_interval_seconds: int
+    discord_component_cache_ttl_seconds: int
+    discord_component_cache_max_items: int
     conversation_log_file: Path
     invocation_log_file: Path
     tool_stats_file: Path
     reminders_file: Path
+    command_sync_guild_ids: frozenset[int]
     admin_user_ids: frozenset[int]
     developer_user_ids: frozenset[int]
 
@@ -147,10 +152,15 @@ def load_settings() -> Settings:
         image_cache_max_items=_env_int("IMAGE_CACHE_MAX_ITEMS", 500),
         presence_ttl_seconds=_env_int("PRESENCE_TTL_SECONDS", 21600),
         presence_max_context_users=_env_int("PRESENCE_MAX_CONTEXT_USERS", 8),
+        presence_max_age_seconds=_env_int("PRESENCE_MAX_AGE_SECONDS", 86400),
+        presence_cleanup_interval_seconds=_env_int("PRESENCE_CLEANUP_INTERVAL_SECONDS", 3600),
+        discord_component_cache_ttl_seconds=_env_int("DISCORD_COMPONENT_CACHE_TTL_SECONDS", 30),
+        discord_component_cache_max_items=_env_int("DISCORD_COMPONENT_CACHE_MAX_ITEMS", 500),
         conversation_log_file=_env_path("CONVERSATION_LOG_FILE", BASE_DIR / "logs" / "conversation.jsonl"),
         invocation_log_file=_env_path("INVOCATION_LOG_FILE", BASE_DIR / "logs" / "invocation.jsonl"),
         tool_stats_file=_env_path("TOOL_STATS_FILE", BASE_DIR / "tool_stats.json"),
         reminders_file=_env_path("REMINDERS_FILE", BASE_DIR / "reminders.json"),
+        command_sync_guild_ids=_env_id_set("COMMAND_SYNC_GUILD_IDS"),
         admin_user_ids=_env_id_set("ADMIN_USER_IDS"),
         developer_user_ids=_env_id_set("DEVELOPER_USER_IDS"),
     )

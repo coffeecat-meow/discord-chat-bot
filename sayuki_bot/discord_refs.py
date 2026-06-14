@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import discord
 
@@ -91,7 +92,15 @@ def _format_channel(channel_id: int, channel) -> str:
     return line
 
 
-async def _format_message_link(url: str, channel, message: discord.Message) -> str:
+async def _format_message_link(
+    url: str,
+    channel,
+    message: discord.Message,
+    component_context_cache: dict[int, str] | None = None,
+    component_context_cache_times: dict[int, datetime] | None = None,
+    component_cache_ttl_seconds: int = 30,
+    component_cache_max_items: int = 500,
+) -> str:
     key = _message_key(message.id)
     channel_name = getattr(channel, "name", str(getattr(channel, "id", "")))
     guild_name = getattr(getattr(channel, "guild", None), "name", "")
@@ -119,6 +128,10 @@ async def _format_message_link(url: str, channel, message: discord.Message) -> s
         message,
         creator_label,
         {message.author.id: creator_label},
+        component_context_cache,
+        component_context_cache_times,
+        component_cache_ttl_seconds,
+        component_cache_max_items,
     )
     if component_context:
         line += "\n" + component_context
@@ -131,6 +144,10 @@ async def resolve_discord_references(
     source_message: discord.Message,
     text: str,
     *,
+    component_context_cache: dict[int, str] | None = None,
+    component_context_cache_times: dict[int, datetime] | None = None,
+    component_cache_ttl_seconds: int = 30,
+    component_cache_max_items: int = 500,
     max_message_links: int = 5,
     max_channel_mentions: int = 8,
 ) -> DiscordReferenceInfo:
@@ -190,7 +207,17 @@ async def resolve_discord_references(
             key = _message_key(linked_message.id)
             info.reply_targets[key] = linked_message
             _collect_image_targets(linked_message, info)
-            lines.append(await _format_message_link(url, channel, linked_message))
+            lines.append(
+                await _format_message_link(
+                    url,
+                    channel,
+                    linked_message,
+                    component_context_cache,
+                    component_context_cache_times,
+                    component_cache_ttl_seconds,
+                    component_cache_max_items,
+                )
+            )
 
     info.context = "\n".join(lines).strip()
     return info

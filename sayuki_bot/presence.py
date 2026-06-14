@@ -125,10 +125,30 @@ class PresenceRecord:
 
 
 class PresenceManager:
-    def __init__(self, ttl_seconds: int = 21600, max_context_users: int = 8):
+    def __init__(
+        self,
+        ttl_seconds: int = 21600,
+        max_context_users: int = 8,
+        max_age_seconds: int = 86400,
+    ):
         self.ttl_seconds = ttl_seconds
         self.max_context_users = max_context_users
+        self.max_age_seconds = max_age_seconds
         self.records: dict[tuple[int, int], PresenceRecord] = {}
+
+    def cleanup_expired(self, now: datetime | None = None) -> int:
+        if self.max_age_seconds <= 0:
+            return 0
+
+        now = now or datetime.now(TW_TZ)
+        expired_keys = [
+            key
+            for key, record in self.records.items()
+            if (now - record.updated_at).total_seconds() > self.max_age_seconds
+        ]
+        for key in expired_keys:
+            self.records.pop(key, None)
+        return len(expired_keys)
 
     def update_member(self, member) -> None:
         guild = getattr(member, "guild", None)
@@ -186,6 +206,7 @@ class PresenceManager:
             return "無"
 
         now = datetime.now(TW_TZ)
+        self.cleanup_expired(now)
         lines = []
         for raw_user_id in list(user_ids)[: self.max_context_users]:
             record = self.get_record(guild_id, raw_user_id)
