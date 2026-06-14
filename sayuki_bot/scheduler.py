@@ -420,11 +420,12 @@ class Scheduler:
         pending_split: str | None = None
 
         def _flush() -> None:
-            nonlocal pending_split
+            nonlocal current_target, pending_split
             content = "".join(current_text).strip()
             current_text.clear()
             if content:
                 items.append((content, pending_split, current_target))
+                current_target = None
                 pending_split = None
 
         for token in tokens:
@@ -1235,6 +1236,7 @@ class Scheduler:
                 chunk_items.append((chunk, split_token if index == 0 else None, reply_target_key))
 
         sent_any = False
+        used_reply_target_keys: set[str] = set()
         try:
             for index, (chunk, split_token, reply_target_key) in enumerate(chunk_items):
                 if generation is not None and generation != self.interrupt_generation:
@@ -1260,9 +1262,12 @@ class Scheduler:
                 if generation is not None and generation != self.interrupt_generation:
                     return
 
-                reply_target = reply_targets.get(reply_target_key or "")
+                reply_target = None
+                if reply_target_key and reply_target_key not in used_reply_target_keys:
+                    reply_target = reply_targets.get(reply_target_key)
                 if reply_target:
                     await reply_target.reply(**kwargs, mention_author=False)
+                    used_reply_target_keys.add(reply_target_key)
                 elif isinstance(interaction_obj, discord.Interaction):
                     if not interaction_obj.response.is_done():
                         await interaction_obj.response.send_message(**kwargs)
