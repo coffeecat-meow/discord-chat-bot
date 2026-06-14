@@ -268,7 +268,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             interaction.user.display_name,
         )
         scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
-        chat_history = build_chat_history(
+        chat_history = await build_chat_history(
             history_msgs,
             cached_msgs,
             current_message,
@@ -610,7 +610,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
                     message.author.display_name,
                 )
                 scheduler.prune_image_cache(state.vl_description_cache, state.vl_description_cache_times)
-                chat_history = build_chat_history(
+                chat_history = await build_chat_history(
                     history_msgs,
                     cached_msgs,
                     message,

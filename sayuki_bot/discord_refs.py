@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import discord
 
 from .config import TW_TZ
+from .message_context import build_discord_component_context
 
 
 CHANNEL_MENTION_RE = re.compile(r"<#(\d+)>")
@@ -90,7 +91,7 @@ def _format_channel(channel_id: int, channel) -> str:
     return line
 
 
-def _format_message_link(url: str, channel, message: discord.Message) -> str:
+async def _format_message_link(url: str, channel, message: discord.Message) -> str:
     key = _message_key(message.id)
     channel_name = getattr(channel, "name", str(getattr(channel, "id", "")))
     guild_name = getattr(getattr(channel, "guild", None), "name", "")
@@ -112,6 +113,15 @@ def _format_message_link(url: str, channel, message: discord.Message) -> str:
 
     if any(item.content_type and item.content_type.startswith("image/") for item in message.attachments):
         line += f"，可用 [[VIEW_IMAGE: #{key}]] 查看圖片"
+
+    creator_label = f"{message.author.display_name} (ID:{message.author.id})"
+    component_context = await build_discord_component_context(
+        message,
+        creator_label,
+        {message.author.id: creator_label},
+    )
+    if component_context:
+        line += "\n" + component_context
 
     return line
 
@@ -180,7 +190,7 @@ async def resolve_discord_references(
             key = _message_key(linked_message.id)
             info.reply_targets[key] = linked_message
             _collect_image_targets(linked_message, info)
-            lines.append(_format_message_link(url, channel, linked_message))
+            lines.append(await _format_message_link(url, channel, linked_message))
 
     info.context = "\n".join(lines).strip()
     return info
