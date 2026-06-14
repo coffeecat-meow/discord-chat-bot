@@ -94,6 +94,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         tool_stats_manager,
         settings.image_cache_ttl_seconds,
         settings.image_cache_max_items,
+        settings.reminders_file,
     )
 
     bot.sayuki = SimpleNamespace(
@@ -121,6 +122,23 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             return mention_match.group(1) or mention_match.group(2)
 
         return value if value.isdigit() else None
+
+    async def _bot_member_for_guild(guild: discord.Guild):
+        member = guild.get_member(bot.user.id) if bot.user else None
+        if member:
+            return member
+
+        try:
+            return await guild.fetch_member(bot.user.id)
+        except Exception:
+            return getattr(guild, "me", None)
+
+    def _permission_line(label: str, value) -> str:
+        if value is None:
+            status = "未知"
+        else:
+            status = "OK" if value else "缺少"
+        return f"{label}：{status}"
 
     @asynccontextmanager
     async def _typing_for_trigger(message: discord.Message, is_proactive: bool):
@@ -382,6 +400,51 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="sayuki_permissions", description="管理員限定：診斷bot目前頻道/伺服器權限")
+    async def sayuki_permissions(interaction: discord.Interaction):
+        if not _is_admin(interaction.user.id):
+            await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
+            return
+
+        if not interaction.guild or not interaction.channel:
+            await interaction.response.send_message("這個指令只能在Discord伺服器頻道內使用", ephemeral=True)
+            return
+
+        member = await _bot_member_for_guild(interaction.guild)
+        if not member:
+            await interaction.response.send_message("找不到bot自己的伺服器成員資料", ephemeral=True)
+            return
+
+        guild_perms = member.guild_permissions
+        channel_perms = (
+            interaction.channel.permissions_for(member)
+            if hasattr(interaction.channel, "permissions_for")
+            else guild_perms
+        )
+        send_polls = getattr(channel_perms, "send_polls", None)
+        lines = [
+            f"伺服器：{interaction.guild.name} ({interaction.guild.id})",
+            f"頻道：#{getattr(interaction.channel, 'name', interaction.channel.id)} ({interaction.channel.id})",
+            f"Bot成員：{member.display_name} ({member.id})",
+            f"最高身分組：{member.top_role.name} (position:{member.top_role.position})",
+            "",
+            _permission_line("Administrator", guild_perms.administrator),
+            _permission_line("Send Messages", channel_perms.send_messages),
+            _permission_line("Read Message History", channel_perms.read_message_history),
+            _permission_line("Add Reactions", channel_perms.add_reactions),
+            _permission_line("Embed Links", channel_perms.embed_links),
+            _permission_line("Attach Files", channel_perms.attach_files),
+            _permission_line("Create Public Threads", getattr(channel_perms, "create_public_threads", None)),
+            _permission_line("Send Messages in Threads", getattr(channel_perms, "send_messages_in_threads", None)),
+            _permission_line("Send Polls", send_polls),
+            _permission_line("Moderate Members / Timeout", guild_perms.moderate_members),
+            _permission_line("Manage Nicknames", guild_perms.manage_nicknames),
+            _permission_line("Manage Events", getattr(guild_perms, "manage_events", None)),
+            "",
+            "提示：禁言/改暱稱還會受身分組階級影響，bot最高身分組必須高於目標成員。",
+        ]
+        await interaction.response.send_message(f"```text\n{chr(10).join(lines)}\n```", ephemeral=True)
+
     @bot.tree.command(name="sayuki_tool_stats", description="管理員限定：查看工具使用統計")
     async def sayuki_tool_stats(interaction: discord.Interaction):
         if not _is_admin(interaction.user.id):
@@ -436,6 +499,29 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         await interaction.response.defer(ephemeral=True, thinking=True)
         entries = await _read_log_entries(kind, day, limit)
         await _send_log_entries(interaction, entries, kind, day)
+
+    @bot.tree.command(name="sayuki_reminders", description="管理員限定：查看待觸發提醒")
+    @app_commands.describe(limit="最多顯示幾筆，1到50")
+    async def sayuki_reminders(interaction: discord.Interaction, limit: int = 20):
+        if not _is_admin(interaction.user.id):
+            await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
+            return
+
+        reminders_text = await scheduler.format_pending_reminders(limit)
+        if len(reminders_text) > 1900:
+            reminders_text = reminders_text[:1900] + "\n...（過長已截斷）"
+        await interaction.response.send_message(f"```text\n{reminders_text}\n```", ephemeral=True)
+
+    @bot.tree.command(name="sayuki_cancel_reminder", description="管理員限定：取消待觸發提醒")
+    @app_commands.describe(reminder_id="提醒ID，可只貼前幾碼")
+    async def sayuki_cancel_reminder(interaction: discord.Interaction, reminder_id: str):
+        if not _is_admin(interaction.user.id):
+            await interaction.response.send_message("你沒有權限使用這個指令", ephemeral=True)
+            return
+
+        ok = await scheduler.cancel_reminder(reminder_id)
+        message = "已取消提醒" if ok else "找不到符合的提醒ID"
+        await interaction.response.send_message(message, ephemeral=True)
 
     @bot.tree.command(name="sayuki_clear_status", description="管理員限定：清空紗月目前動態狀態")
     async def sayuki_clear_status(interaction: discord.Interaction):
@@ -533,6 +619,7 @@ def create_bot(settings: Settings | None = None) -> commands.Bot:
         await short_memory_manager.init_db()
         await _remember_developers()
         scheduler.start_presence_schedule()
+        await scheduler.init_reminders()
         if not bot.sayuki.commands_synced:
             try:
                 synced = await bot.tree.sync()

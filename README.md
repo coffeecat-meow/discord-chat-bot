@@ -100,6 +100,7 @@ IMAGE_CACHE_MAX_ITEMS=500
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
 INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
+REMINDERS_FILE=reminders.json
 OBSCURA_BIN=./obscura-aarch64-macos/obscura
 MAX_MEMORY_CONTEXT_CHARS=120000
 ```
@@ -152,9 +153,12 @@ Only Discord user IDs listed in `ADMIN_USER_IDS` can use these commands. Command
 - `/sayuki_look [note]` - ask the bot to proactively inspect the current channel
 - `/sayuki_interrupt` - clear queued requests and stop unsent split output
 - `/sayuki_status` - show queue and message stats
+- `/sayuki_permissions` - diagnose bot permissions in the current channel/server
 - `/sayuki_tool_stats` - inspect tool calls, failures, and average durations
 - `/sayuki_debug_last` - show the latest processing/debug summary
 - `/sayuki_logs [kind] [day] [limit]` - inspect conversation, LLM invocation, or short-term memory logs
+- `/sayuki_reminders [limit]` - inspect pending reminders
+- `/sayuki_cancel_reminder reminder_id` - cancel a pending reminder
 - `/sayuki_clear_status` - clear the bot presence
 - `/sayuki_reload_prompt` - reload `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id` - inspect a user's memory
@@ -173,6 +177,7 @@ Runtime files are ignored by git:
 - `logs/short_memory_pending.jsonl`
 - `user_stats.json`
 - `tool_stats.json`
+- `reminders.json`
 - `logs/conversation.jsonl`
 - `logs/invocation.jsonl`
 
@@ -187,6 +192,8 @@ At runtime, the bot injects full memory only for users related to the current co
 `user_stats.json` stores lightweight interaction counters such as messages seen, bot triggers, bot replies, last interaction times, and channel-level counts.
 
 `tool_stats.json` stores persistent tool usage counters for today, current month, and all time, including failures and average duration.
+
+`reminders.json` stores pending reminders so they can be restored after a bot restart.
 
 `logs/conversation.jsonl` stores conversation records: timestamps, channel/user identifiers, trigger reason, user message text, bot response text, and query tool usage.
 

@@ -44,6 +44,7 @@ class Settings:
     conversation_log_file: Path
     invocation_log_file: Path
     tool_stats_file: Path
+    reminders_file: Path
     admin_user_ids: frozenset[int]
     developer_user_ids: frozenset[int]
 
@@ -145,6 +146,7 @@ def load_settings() -> Settings:
         conversation_log_file=_env_path("CONVERSATION_LOG_FILE", BASE_DIR / "logs" / "conversation.jsonl"),
         invocation_log_file=_env_path("INVOCATION_LOG_FILE", BASE_DIR / "logs" / "invocation.jsonl"),
         tool_stats_file=_env_path("TOOL_STATS_FILE", BASE_DIR / "tool_stats.json"),
+        reminders_file=_env_path("REMINDERS_FILE", BASE_DIR / "reminders.json"),
         admin_user_ids=_env_id_set("ADMIN_USER_IDS"),
         developer_user_ids=_env_id_set("DEVELOPER_USER_IDS"),
     )

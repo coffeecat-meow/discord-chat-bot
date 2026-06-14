@@ -100,6 +100,7 @@ IMAGE_CACHE_MAX_ITEMS=500
 CONVERSATION_LOG_FILE=logs/conversation.jsonl
 INVOCATION_LOG_FILE=logs/invocation.jsonl
 TOOL_STATS_FILE=tool_stats.json
+REMINDERS_FILE=reminders.json
 OBSCURA_BIN=./obscura-aarch64-macos/obscura
 MAX_MEMORY_CONTEXT_CHARS=120000
 ```
@@ -152,9 +153,12 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `/sayuki_look [note]`：讓 bot 主動查看目前頻道
 - `/sayuki_interrupt`：清除佇列並停止尚未輸出的分段訊息
 - `/sayuki_status`：查看佇列與發言統計
+- `/sayuki_permissions`：診斷目前頻道/伺服器中的bot權限
 - `/sayuki_tool_stats`：查看工具呼叫、失敗次數與平均耗時
 - `/sayuki_debug_last`：查看最近一次處理/debug摘要
 - `/sayuki_logs [kind] [day] [limit]`：查看對話、LLM調用或短期記憶紀錄
+- `/sayuki_reminders [limit]`：查看待觸發提醒
+- `/sayuki_cancel_reminder reminder_id`：取消待觸發提醒
 - `/sayuki_clear_status`：清空 bot 動態狀態
 - `/sayuki_reload_prompt`：重新讀取 `SYSTEM_PROMPT.txt`
 - `/sayuki_memory_user user_id`：查看指定使用者記憶
@@ -173,6 +177,7 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 - `logs/short_memory_pending.jsonl`
 - `user_stats.json`
 - `tool_stats.json`
+- `reminders.json`
 - `logs/conversation.jsonl`
 - `logs/invocation.jsonl`
 
@@ -187,6 +192,8 @@ Obscura binary 已透過 `obscura*` 加入 `.gitignore`。
 `user_stats.json` 儲存輕量互動統計，例如看過訊息數、觸發 bot 次數、bot 回覆次數、最後互動時間與頻道統計。
 
 `tool_stats.json` 儲存持久化工具統計，包含今日、本月、永久的呼叫次數、失敗次數與平均耗時。
+
+`reminders.json` 儲存待觸發提醒，bot重啟後會恢復排程。
 
 `logs/conversation.jsonl` 儲存對話紀錄：時間、頻道/使用者ID、觸發原因、使用者文字、bot回覆文字與查詢工具使用情況。
 

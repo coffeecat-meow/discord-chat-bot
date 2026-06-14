@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
 from collections import deque
 from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
 from time import perf_counter
+from types import SimpleNamespace
 
 import discord
 import opencc
@@ -110,6 +113,24 @@ def _strip_hidden_tool_tags(text: str) -> str:
     return TOOL_TAG_RE.sub("", text)
 
 
+def _append_action_event(
+    action_events: list[dict] | None,
+    tool: str,
+    success: bool,
+    detail: str,
+) -> None:
+    if action_events is None:
+        return
+
+    action_events.append(
+        {
+            "tool": tool,
+            "success": success,
+            "detail": _preview_text(detail, 600),
+        }
+    )
+
+
 class Scheduler:
     def __init__(
         self,
@@ -124,6 +145,7 @@ class Scheduler:
         tool_stats_mgr=None,
         image_cache_ttl_seconds: int = 21600,
         image_cache_max_items: int = 500,
+        reminders_file: Path | None = None,
     ):
         self.queue = deque()
         self.llm = llm
@@ -137,6 +159,7 @@ class Scheduler:
         self.tool_stats_mgr = tool_stats_mgr
         self.image_cache_ttl_seconds = image_cache_ttl_seconds
         self.image_cache_max_items = image_cache_max_items
+        self.reminders_file = reminders_file
         self.last_debug_record: dict | None = None
         self.processing = False
         self.lock = asyncio.Lock()
@@ -146,6 +169,9 @@ class Scheduler:
         self.interrupt_generation = 0
         self.interrupt_event = asyncio.Event()
         self.active_reminder_keys: set[tuple[str, int | None, int | None, float, str]] = set()
+        self.reminder_tasks: dict[str, asyncio.Task] = {}
+        self.reminder_lock = asyncio.Lock()
+        self.reminders_initialized = False
 
     def prune_image_cache(self, cache: dict[int, str], cache_times: dict[int, datetime]) -> None:
         if not cache:
@@ -183,6 +209,7 @@ class Scheduler:
             "original_message": _preview_text(req.original_message, 500),
             "initial_response": "",
             "tool_rounds": [],
+            "action_tools": [],
             "no_need": False,
             "sent": False,
             "replied_to_message": False,
@@ -213,14 +240,21 @@ class Scheduler:
 
         tool_rounds = record.get("tool_rounds", [])
         if tool_rounds:
-            lines.append("工具：")
+            lines.append("查詢工具：")
             for round_info in tool_rounds:
                 tools = ", ".join(round_info.get("tools", [])) or "無"
                 reports = " / ".join(round_info.get("reports", [])) or "無結果"
                 lines.append(f"- 第{round_info.get('round', '?')}輪：{tools}")
                 lines.append(f"  結果：{reports}")
         else:
-            lines.append("工具：未使用")
+            lines.append("查詢工具：未使用")
+
+        action_tools = record.get("action_tools", [])
+        if action_tools:
+            lines.append("執行工具：")
+            for event in action_tools:
+                status = "成功" if event.get("success") else "失敗"
+                lines.append(f"- {event.get('tool', '?')}：{status} - {event.get('detail', '')}")
 
         lines.append(f"最後回覆：{record.get('final_response', '')}")
         return "\n".join(lines)
@@ -241,6 +275,11 @@ class Scheduler:
             for round_info in debug_record.get("tool_rounds", [])
             for tool in round_info.get("tools", [])
         ]
+        tools.extend(
+            event.get("tool")
+            for event in debug_record.get("action_tools", [])
+            if event.get("tool")
+        )
         channel = getattr(req.interaction_obj, "channel", None)
         await self.conversation_logger.write(
             {
@@ -259,6 +298,7 @@ class Scheduler:
                 "bot_response": _preview_text(bot_response, 4000),
                 "tool_rounds": len(debug_record.get("tool_rounds", [])),
                 "tools": tools,
+                "action_tools": debug_record.get("action_tools", []),
             }
         )
 
@@ -485,7 +525,7 @@ class Scheduler:
 
         return PING_TAG_RE.sub(_replace, text)
 
-    async def _apply_status_tags(self, raw_response: str) -> None:
+    async def _apply_status_tags(self, raw_response: str, action_events: list[dict] | None = None) -> None:
         for status_text in STATUS_RE.findall(raw_response):
             clean_status = status_text.strip()
             if not clean_status:
@@ -493,17 +533,25 @@ class Scheduler:
 
             started = perf_counter()
             success = False
+            detail = f"更新動態狀態：{clean_status}"
             try:
                 await self._set_presence(clean_status)
                 success = True
                 logger.info("更新動態狀態: %s", clean_status)
             except Exception as exc:
+                detail = f"更新動態狀態失敗：{exc}"
                 logger.error("更新動態狀態失敗: %s", exc)
             finally:
+                _append_action_event(action_events, "STATUS", success, detail)
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("STATUS", (perf_counter() - started) * 1000, success)
 
-    async def _apply_mute_tags(self, raw_response: str, interaction_obj) -> None:
+    async def _apply_mute_tags(
+        self,
+        raw_response: str,
+        interaction_obj,
+        action_events: list[dict] | None = None,
+    ) -> None:
         guild = self._guild_from_interaction(interaction_obj)
         if not guild:
             return
@@ -511,20 +559,25 @@ class Scheduler:
         for user_id_text, seconds_text in MUTE_RE.findall(raw_response):
             started = perf_counter()
             success = False
+            detail = f"禁言 {user_id_text} {seconds_text}秒"
             try:
                 seconds = max(1, min(int(seconds_text), MAX_MUTE_SECONDS))
                 member = await self._find_member(guild, int(user_id_text))
                 if not member:
+                    detail = f"禁言失敗，找不到成員：{user_id_text}"
                     logger.warning("禁言失敗，找不到成員: %s", user_id_text)
                     continue
 
                 until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
                 await member.timeout(until, reason="Sayuki 任性禁言")
                 success = True
+                detail = f"已禁言 {member.display_name} (ID:{user_id_text}) {seconds}秒"
                 logger.info("已禁言 %s %s 秒", user_id_text, seconds)
             except Exception as exc:
+                detail = f"禁言失敗：{exc}"
                 logger.error("禁言失敗: %s", exc)
             finally:
+                _append_action_event(action_events, "MUTE", success, detail)
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("MUTE", (perf_counter() - started) * 1000, success)
 
@@ -547,7 +600,12 @@ class Scheduler:
                 sent_any = True
         return sent_any
 
-    async def _apply_dm_tags(self, raw_response: str, interaction_obj) -> None:
+    async def _apply_dm_tags(
+        self,
+        raw_response: str,
+        interaction_obj,
+        action_events: list[dict] | None = None,
+    ) -> None:
         tags = find_balanced_tool_tags(raw_response, ACTION_TOOL_NAMES)
         for tag in tags:
             if tag.name != "DM_USER":
@@ -559,22 +617,32 @@ class Scheduler:
 
             started = perf_counter()
             success = False
+            detail = f"私訊使用者 {parts[0]}"
             try:
                 user = self.bot.get_user(int(parts[0])) if self.bot else None
                 if not user and self.bot:
                     user = await self.bot.fetch_user(int(parts[0]))
                 if not user:
+                    detail = f"私訊失敗，找不到使用者：{parts[0]}"
                     continue
 
                 dm_channel = user.dm_channel or await user.create_dm()
                 success = await self._send_tool_text_to_channel(dm_channel, parts[1], interaction_obj)
+                detail = f"已私訊 {getattr(user, 'display_name', None) or getattr(user, 'name', parts[0])}"
             except Exception as exc:
+                detail = f"私訊使用者失敗：{exc}"
                 logger.error("私訊使用者失敗: %s", exc)
             finally:
+                _append_action_event(action_events, "DM_USER", success, detail)
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("DM_USER", (perf_counter() - started) * 1000, success)
 
-    async def _apply_thread_tags(self, raw_response: str, interaction_obj) -> None:
+    async def _apply_thread_tags(
+        self,
+        raw_response: str,
+        interaction_obj,
+        action_events: list[dict] | None = None,
+    ) -> None:
         tags = find_balanced_tool_tags(raw_response, ACTION_TOOL_NAMES)
         for tag in tags:
             if tag.name != "THREAD":
@@ -588,9 +656,11 @@ class Scheduler:
             first_message = parts[1] if len(parts) > 1 else ""
             started = perf_counter()
             success = False
+            detail = f"建立討論串：{title}"
             try:
                 channel = getattr(interaction_obj, "channel", None)
                 if not channel:
+                    detail = "建立討論串失敗，找不到目標頻道"
                     continue
 
                 source_message = interaction_obj if isinstance(interaction_obj, discord.Message) else getattr(interaction_obj, "message", None)
@@ -602,13 +672,21 @@ class Scheduler:
                 if first_message.strip():
                     await self._send_tool_text_to_channel(thread, first_message, interaction_obj)
                 success = True
+                detail = f"已建立討論串：{getattr(thread, 'name', title)} (ID:{getattr(thread, 'id', '')})"
             except Exception as exc:
+                detail = f"建立討論串失敗：{exc}"
                 logger.error("建立討論串失敗: %s", exc)
             finally:
+                _append_action_event(action_events, "THREAD", success, detail)
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("THREAD", (perf_counter() - started) * 1000, success)
 
-    async def _apply_nickname_tags(self, raw_response: str, interaction_obj) -> None:
+    async def _apply_nickname_tags(
+        self,
+        raw_response: str,
+        interaction_obj,
+        action_events: list[dict] | None = None,
+    ) -> None:
         guild = self._guild_from_interaction(interaction_obj)
         if not guild:
             return
@@ -624,9 +702,11 @@ class Scheduler:
 
             started = perf_counter()
             success = False
+            detail = f"更改 {parts[0]} 的伺服器暱稱"
             try:
                 member = await self._find_member(guild, int(parts[0]))
                 if not member:
+                    detail = f"更改暱稱失敗，找不到成員：{parts[0]}"
                     logger.warning("更改暱稱失敗，找不到成員: %s", parts[0])
                     continue
 
@@ -636,10 +716,13 @@ class Scheduler:
                     reason="Sayuki 更改伺服器暱稱",
                 )
                 success = True
+                detail = f"已把 {member.display_name} (ID:{parts[0]}) 的伺服器暱稱改成：{nickname or '清除暱稱'}"
                 logger.info("已更改 %s 的伺服器暱稱", parts[0])
             except Exception as exc:
+                detail = f"更改伺服器暱稱失敗：{exc}"
                 logger.error("更改伺服器暱稱失敗: %s", exc)
             finally:
+                _append_action_event(action_events, "NICKNAME", success, detail)
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("NICKNAME", (perf_counter() - started) * 1000, success)
 
@@ -655,7 +738,12 @@ class Scheduler:
 
         return start_time + timedelta(minutes=max(1, minutes))
 
-    async def _apply_server_event_tags(self, raw_response: str, interaction_obj) -> None:
+    async def _apply_server_event_tags(
+        self,
+        raw_response: str,
+        interaction_obj,
+        action_events: list[dict] | None = None,
+    ) -> None:
         guild = self._guild_from_interaction(interaction_obj)
         if not guild:
             return
@@ -675,19 +763,23 @@ class Scheduler:
 
             start_time = _parse_local_datetime(start_text)
             if not start_time:
+                _append_action_event(action_events, "SERVER_EVENT", False, f"建立伺服器活動失敗，開始時間格式錯誤：{start_text}")
                 logger.warning("建立伺服器活動失敗，開始時間格式錯誤: %s", start_text)
                 continue
 
             end_time = self._parse_event_end_time(start_time, end_text)
             if not end_time:
+                _append_action_event(action_events, "SERVER_EVENT", False, f"建立伺服器活動失敗，結束時間格式錯誤：{end_text}")
                 logger.warning("建立伺服器活動失敗，結束時間格式錯誤: %s", end_text)
                 continue
             if end_time <= start_time:
+                _append_action_event(action_events, "SERVER_EVENT", False, "建立伺服器活動失敗，結束時間不可早於開始時間")
                 logger.warning("建立伺服器活動失敗，結束時間不可早於開始時間")
                 continue
 
             started = perf_counter()
             success = False
+            detail = f"建立伺服器活動：{name}"
             try:
                 await guild.create_scheduled_event(
                     name=self.opencc_converter.convert(name)[:100],
@@ -700,10 +792,13 @@ class Scheduler:
                     reason="Sayuki 建立伺服器活動",
                 )
                 success = True
+                detail = f"已建立伺服器活動：{name}，時間：{start_time.astimezone(TW_TZ).strftime('%Y/%m/%d %H:%M')}"
                 logger.info("已建立伺服器活動: %s", name)
             except Exception as exc:
+                detail = f"建立伺服器活動失敗：{exc}"
                 logger.error("建立伺服器活動失敗: %s", exc)
             finally:
+                _append_action_event(action_events, "SERVER_EVENT", success, detail)
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("SERVER_EVENT", (perf_counter() - started) * 1000, success)
 
@@ -1150,9 +1245,195 @@ class Scheduler:
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_bot_message()
 
+    def _read_reminder_records_sync(self) -> list[dict]:
+        if not self.reminders_file or not self.reminders_file.exists():
+            return []
+
+        try:
+            data = json.loads(self.reminders_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+        if isinstance(data, dict):
+            data = data.get("reminders", [])
+        return [item for item in data if isinstance(item, dict)]
+
+    def _write_reminder_records_sync(self, records: list[dict]) -> None:
+        if not self.reminders_file:
+            return
+
+        self.reminders_file.parent.mkdir(parents=True, exist_ok=True)
+        self.reminders_file.write_text(
+            json.dumps({"reminders": records}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    async def _read_reminder_records(self) -> list[dict]:
+        return await asyncio.to_thread(self._read_reminder_records_sync)
+
+    async def _write_reminder_records(self, records: list[dict]) -> None:
+        await asyncio.to_thread(self._write_reminder_records_sync, records)
+
+    def _reminder_key_from_record(self, record: dict) -> tuple[str, int | None, int | None, float, str]:
+        return (
+            str(record.get("target_uid", "")),
+            record.get("channel_id"),
+            record.get("trigger_message_id"),
+            round(float(record.get("wait_minutes", 0.0)), 4),
+            str(record.get("content", "")),
+        )
+
+    def _serializable_messages(self, messages: list) -> list[dict[str, str]]:
+        serializable = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role", "user"))
+            content = message.get("content", "")
+            serializable.append({"role": role, "content": content if isinstance(content, str) else str(content)})
+        return serializable
+
+    async def _persist_reminder_record(self, record: dict) -> None:
+        if not self.reminders_file:
+            return
+
+        async with self.reminder_lock:
+            records = await self._read_reminder_records()
+            records = [item for item in records if item.get("id") != record.get("id")]
+            records.append(record)
+            records.sort(key=lambda item: str(item.get("due_at", "")))
+            await self._write_reminder_records(records)
+
+    async def _remove_reminder_record(self, reminder_id: str) -> None:
+        if not self.reminders_file:
+            return
+
+        async with self.reminder_lock:
+            records = await self._read_reminder_records()
+            records = [item for item in records if item.get("id") != reminder_id]
+            await self._write_reminder_records(records)
+
+    async def _resolve_reminder_interaction(self, record: dict):
+        if not self.bot:
+            return None
+
+        channel_id = record.get("channel_id")
+        if not channel_id:
+            return None
+
+        channel = self.bot.get_channel(int(channel_id))
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(int(channel_id))
+            except Exception as exc:
+                logger.error("恢復提醒失敗，讀取頻道失敗: %s", exc)
+                return None
+
+        guild = getattr(channel, "guild", None)
+        guild_id = record.get("guild_id")
+        if not guild and guild_id:
+            guild = self.bot.get_guild(int(guild_id))
+
+        target_uid = str(record.get("target_uid", ""))
+        user_name = str(record.get("user_name", target_uid or "使用者"))
+        author = SimpleNamespace(
+            id=int(target_uid) if target_uid.isdigit() else 0,
+            display_name=user_name,
+        )
+        return SimpleNamespace(
+            channel=channel,
+            guild=guild,
+            author=author,
+            id=record.get("trigger_message_id"),
+        )
+
+    def _schedule_reminder_record(self, record: dict) -> None:
+        reminder_id = str(record.get("id", ""))
+        due_at = _parse_local_datetime(str(record.get("due_at", "")))
+        if not reminder_id or not due_at:
+            return
+
+        wait_seconds = max((due_at - datetime.now(TW_TZ)).total_seconds(), 0.0)
+        reminder_key = self._reminder_key_from_record(record)
+        self.active_reminder_keys.add(reminder_key)
+        task = asyncio.create_task(
+            self._bg_reminder_task(
+                wait_seconds,
+                str(record.get("content", "")),
+                str(record.get("user_name", "")),
+                str(record.get("target_uid", "")),
+                str(record.get("original_message", "")),
+                None,
+                record.get("context_messages", []),
+                reminder_key,
+                reminder_id,
+                record,
+            )
+        )
+        self.reminder_tasks[reminder_id] = task
+
+    async def init_reminders(self) -> None:
+        if self.reminders_initialized:
+            return
+        self.reminders_initialized = True
+
+        records = await self._read_reminder_records()
+        valid_records = []
+        for record in records:
+            if not record.get("id") or not _parse_local_datetime(str(record.get("due_at", ""))):
+                continue
+            valid_records.append(record)
+            self._schedule_reminder_record(record)
+
+        if len(valid_records) != len(records):
+            await self._write_reminder_records(valid_records)
+        if valid_records:
+            logger.info("已恢復 %s 筆定時提醒", len(valid_records))
+
+    async def format_pending_reminders(self, limit: int = 20) -> str:
+        records = await self._read_reminder_records()
+        if not records:
+            return "目前沒有待觸發提醒。"
+
+        lines = []
+        for record in records[:max(1, min(limit, 50))]:
+            due_at = _parse_local_datetime(str(record.get("due_at", "")))
+            due_text = due_at.astimezone(TW_TZ).strftime("%Y/%m/%d %H:%M") if due_at else str(record.get("due_at", ""))
+            content = _preview_text(str(record.get("content", "")), 120)
+            lines.append(
+                f"[{str(record.get('id', ''))[:10]}] {due_text} "
+                f"@{record.get('user_name', record.get('target_uid', ''))} "
+                f"#{record.get('channel_name', record.get('channel_id', ''))}：{content}"
+            )
+
+        if len(records) > len(lines):
+            lines.append(f"...另有 {len(records) - len(lines)} 筆未顯示")
+        return "\n".join(lines)
+
+    async def cancel_reminder(self, reminder_id: str) -> bool:
+        needle = reminder_id.strip()
+        if not needle:
+            return False
+
+        async with self.reminder_lock:
+            records = await self._read_reminder_records()
+            target = next((item for item in records if str(item.get("id", "")).startswith(needle)), None)
+            if not target:
+                return False
+
+            records = [item for item in records if item.get("id") != target.get("id")]
+            await self._write_reminder_records(records)
+
+        target_id = str(target.get("id", ""))
+        task = self.reminder_tasks.pop(target_id, None)
+        if task:
+            task.cancel()
+        self.active_reminder_keys.discard(self._reminder_key_from_record(target))
+        return True
+
     async def _bg_reminder_task(
         self,
-        wait_minutes: float,
+        wait_seconds: float,
         content: str,
         user_name: str,
         target_uid: str,
@@ -1160,9 +1441,16 @@ class Scheduler:
         interaction_obj,
         context_messages: list,
         reminder_key: tuple[str, int | None, int | None, float, str],
+        reminder_id: str | None = None,
+        reminder_record: dict | None = None,
     ) -> None:
         try:
-            await asyncio.sleep(wait_minutes * 60)
+            await asyncio.sleep(wait_seconds)
+            if interaction_obj is None and reminder_record:
+                interaction_obj = await self._resolve_reminder_interaction(reminder_record)
+            if interaction_obj is None:
+                logger.error("提醒送達失敗，找不到可發送的頻道或互動物件")
+                return
 
             remind_context = (
                 f"\n\n【定時提醒時間到】\n"
@@ -1193,6 +1481,9 @@ class Scheduler:
             await self.add_request(new_req)
         finally:
             self.active_reminder_keys.discard(reminder_key)
+            if reminder_id:
+                self.reminder_tasks.pop(reminder_id, None)
+                await self._remove_reminder_record(reminder_id)
 
     async def handle_request(self, req: Request) -> None:
         interaction_obj = req.interaction_obj
@@ -1271,16 +1562,17 @@ class Scheduler:
 
         user_name = interaction_obj.author.display_name if not req.is_interaction else interaction_obj.user.display_name
         req.user_name = user_name
+        action_events = debug_record.setdefault("action_tools", [])
 
         await self._apply_memory_tags(raw_response, req, interaction_obj)
         await self._apply_reactions(raw_response, interaction_obj)
-        await self._apply_status_tags(raw_response)
-        await self._apply_mute_tags(raw_response, interaction_obj)
-        await self._apply_dm_tags(raw_response, interaction_obj)
-        await self._apply_thread_tags(raw_response, interaction_obj)
-        await self._apply_nickname_tags(raw_response, interaction_obj)
-        await self._apply_server_event_tags(raw_response, interaction_obj)
-        await self._schedule_reminder(raw_response, req, interaction_obj)
+        await self._apply_status_tags(raw_response, action_events)
+        await self._apply_mute_tags(raw_response, interaction_obj, action_events)
+        await self._apply_dm_tags(raw_response, interaction_obj, action_events)
+        await self._apply_thread_tags(raw_response, interaction_obj, action_events)
+        await self._apply_nickname_tags(raw_response, interaction_obj, action_events)
+        await self._apply_server_event_tags(raw_response, interaction_obj, action_events)
+        await self._schedule_reminder(raw_response, req, interaction_obj, action_events)
 
         ping_count = len(set(PING_TAG_RE.findall(raw_response)))
         if ping_count and self.tool_stats_mgr:
@@ -1512,7 +1804,13 @@ class Scheduler:
                 if self.tool_stats_mgr:
                     await self.tool_stats_mgr.record_tool("REACT", (perf_counter() - started) * 1000, success)
 
-    async def _schedule_reminder(self, raw_response: str, req: Request, interaction_obj) -> None:
+    async def _schedule_reminder(
+        self,
+        raw_response: str,
+        req: Request,
+        interaction_obj,
+        action_events: list[dict] | None = None,
+    ) -> None:
         if not req.allow_reminders:
             return
 
@@ -1526,6 +1824,8 @@ class Scheduler:
             minutes = float(remind_match.group(1))
             remind_content = remind_match.group(2).strip()
             if minutes <= 0 or not remind_content:
+                detail = f"提醒設定失敗，分鐘數或內容無效：{minutes} / {remind_content}"
+                _append_action_event(action_events, "REMIND", False, detail)
                 logger.warning("提醒設定失敗，分鐘數或內容無效: %s / %s", minutes, remind_content)
                 return
 
@@ -1534,13 +1834,34 @@ class Scheduler:
             message_id = req.trigger_message_id or getattr(interaction_obj, "id", None)
             reminder_key = (target_uid, channel_id, message_id, round(minutes, 4), remind_content)
             if reminder_key in self.active_reminder_keys:
+                _append_action_event(action_events, "REMIND", False, f"略過重複提醒：{minutes}分鐘後 - {remind_content}")
                 logger.info("略過重複提醒: %s 分鐘後 - %s", minutes, remind_content)
                 return
 
+            due_at = datetime.now(TW_TZ) + timedelta(minutes=minutes)
+            reminder_id = datetime.now(TW_TZ).strftime("%Y%m%d%H%M%S%f")
+            channel_name = req.target_channel_name or getattr(interaction_obj.channel, "name", str(channel_id or ""))
+            record = {
+                "id": reminder_id,
+                "created_at": datetime.now(TW_TZ).isoformat(timespec="seconds"),
+                "due_at": due_at.isoformat(timespec="seconds"),
+                "wait_minutes": minutes,
+                "content": remind_content,
+                "user_name": req.user_name,
+                "target_uid": target_uid,
+                "original_message": req.original_message,
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "guild_id": req.target_guild_id or getattr(getattr(interaction_obj, "guild", None), "id", None),
+                "guild_name": req.target_guild_name or getattr(getattr(interaction_obj, "guild", None), "name", ""),
+                "trigger_message_id": message_id,
+                "context_messages": self._serializable_messages(req.messages),
+            }
+            await self._persist_reminder_record(record)
             self.active_reminder_keys.add(reminder_key)
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._bg_reminder_task(
-                    minutes,
+                    minutes * 60,
                     remind_content,
                     req.user_name,
                     target_uid,
@@ -1548,11 +1869,21 @@ class Scheduler:
                     interaction_obj,
                     req.messages,
                     reminder_key,
+                    reminder_id,
+                    record,
                 )
             )
+            self.reminder_tasks[reminder_id] = task
             success = True
+            _append_action_event(
+                action_events,
+                "REMIND",
+                True,
+                f"已排程提醒 [{reminder_id[:10]}]，時間：{due_at.strftime('%Y/%m/%d %H:%M')}，內容：{remind_content}",
+            )
             logger.info("設定提醒：%s 分鐘後 - %s", minutes, remind_content)
         except Exception as exc:
+            _append_action_event(action_events, "REMIND", False, f"提醒設定失敗：{exc}")
             logger.error("提醒設定失敗: %s", exc)
         finally:
             if self.tool_stats_mgr:
