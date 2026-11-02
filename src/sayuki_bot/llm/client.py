@@ -98,7 +98,12 @@ class ModelClient:
         options = dict(
             api_key=key,
             base_url=selected.base_url,
-            timeout=self.config.get("model", "timeout_seconds", 90),
+            # The per-call deadline is enforced in generate(); the SDK limit only
+            # has to be long enough for the slowest role (background memory).
+            timeout=max(
+                self.config.get("model", "timeout_seconds", 90),
+                self.config.get("memory", "timeout_seconds", 180),
+            ),
             max_retries=0
             if self.config.get("model", "routes")
             else self.config.get("model", "max_retries", 1),
@@ -236,6 +241,10 @@ class ModelClient:
         total = self.config.get("model", "timeout_seconds", 90)
         if role == "attention":
             total = min(total, self.config.get("conversation", "continuation_timeout_seconds", 8))
+        elif role == "memory":
+            # Background extraction never blocks chat; its long input plus
+            # reasoning routinely exceeded the chat deadline.
+            total = self.config.get("memory", "timeout_seconds", 180)
         deadline = perf_counter() + total
         ready = self._backup_available(backup)
         args, final_low = self._arguments(messages, primary, role, phase)

@@ -91,7 +91,7 @@ max_tools_per_round = 5
 continuation_enabled = true
 continuation_window_seconds = 120 # 且只看當前訊息之前最近 12 則
 cross_channel_window_seconds = 600 # 共享頻道內的明確接續／邀請轉場線索
-continuation_timeout_seconds = 8 # 失敗／逾時不強制插話
+continuation_timeout_seconds = 30 # 接話判斷總時限（主模型約18秒、備援約12秒）；失敗／逾時不強制插話
 proactive_enabled = true
 proactive_cooldown_seconds = 120
 proactive_min_users = 4
@@ -122,6 +122,7 @@ self_chars = 2000 # 分類與來源原文的完整JSON預算；省略不刪資�
 self_limit = 12
 short_ttl_hours = 24
 background_daily_calls = 20
+timeout_seconds = 180 # 背景記憶單次總時限，不阻塞聊天；主模型約108秒、備援約72秒
 # Until sharing policy is confirmed, automatic recall remains channel-local.
 shared_channel_ids = []
 

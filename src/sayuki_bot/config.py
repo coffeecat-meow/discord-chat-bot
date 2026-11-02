@@ -127,6 +127,7 @@ def load_config(path: str | Path | None = None) -> Config:
             "self_limit",
             "short_ttl_hours",
             "background_daily_calls",
+            "timeout_seconds",
         ],
         "tools": ["max_result_chars"],
         "storage": ["diagnostic_retention_days"],
