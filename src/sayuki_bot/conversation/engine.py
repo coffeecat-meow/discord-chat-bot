@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 
 from sayuki_bot.tools.results import bounded_reports
 from sayuki_bot.conversation.repair import RepairState
@@ -12,7 +13,7 @@ from time import perf_counter
 
 from sayuki_bot.delivery.service import DeliveryStopped
 from sayuki_bot.llm.client import EmptyCompletion, supports_final_tool_reasoning
-from sayuki_bot.tools.protocol import parse
+from sayuki_bot.tools.protocol import Part, parse
 from sayuki_bot.tools.registry import REGISTRY
 from sayuki_bot.storage import jsonl_log
 from . import closeout
@@ -20,6 +21,38 @@ from .verification import Verification
 from .continuation import ContinuationState
 
 logger = logging.getLogger(__name__)
+
+
+# Debris the model sometimes writes around a tool tag, e.g. "<[[SEARCH: x]]>".
+_PREFACE_JUNK = set("<>()[]{}|｜＜＞（）［］｛｝")
+_PREFACE_OPENERS = "(（[［{｛|｜「《【"
+_PREFACE_TAG = re.compile(r"</?[A-Za-z_][\w:-]*>")
+
+
+def _clean_preface(parts):
+    """Text before the first tool is sent at once; drop markup-only debris.
+
+    Ordinary replies never pass through here, so kaomoji such as ＞﹏＜ or
+    (⁠｡⁠•́⁠︿⁠•̀⁠｡⁠) are untouched: only bare brackets/pipes count as debris.
+    """
+    cleaned = [
+        Part("text", _PREFACE_TAG.sub("", p.text)) if p.kind == "text" else p for p in parts
+    ]
+    for index in range(len(cleaned) - 1, -1, -1):
+        if cleaned[index].kind == "text":
+            # A dangling opener right before the tool tag, e.g. "我查一下<".
+            trimmed = cleaned[index].text.rstrip().rstrip(_PREFACE_OPENERS).rstrip()
+            # "<" also ends kaomoji (>_< ＞﹏＜); only cut it after a word or space.
+            while trimmed[-1:] in {"<", "＜"} and (len(trimmed) == 1 or trimmed[-2].isalnum() or trimmed[-2].isspace()):
+                trimmed = trimmed[:-1].rstrip()
+            cleaned[index] = Part("text", trimmed)
+            break
+    text = "".join(p.text for p in cleaned if p.kind == "text")
+    if not any(p.kind == "mention" for p in cleaned) and all(
+        ch.isspace() or ch in _PREFACE_JUNK for ch in text
+    ):
+        return []
+    return cleaned
 
 
 def _preview(value, limit=300):
@@ -653,7 +686,15 @@ class Engine:
                 side_effects = True
             if not side_effects:
                 first_tool = next(i for i, part in enumerate(parts) if part.kind == "tool")
-                await self.delivery.send_parts(turn, parts[:first_tool])
+                preface = _clean_preface(parts[:first_tool])
+                original = "".join(p.text for p in parts[:first_tool] if p.kind == "text")
+                kept = "".join(p.text for p in preface if p.kind == "text")
+                if original.strip() != kept.strip():
+                    logger.info(
+                        "工具前言含標記碎片，已過濾 turn=%s 原文=%r 送出=%r",
+                        turn.id, original, kept if preface else "（不送出）",
+                    )
+                await self.delivery.send_parts(turn, preface)
             reports = []
             call_limit = self.config.get("conversation", "max_tools_per_round", 5)
             for part in calls[:call_limit]:
