@@ -1,3 +1,5 @@
+import re
+
 from sayuki_bot.conversation.models import Event
 from .stickers import records
 
@@ -39,3 +41,18 @@ def event_from_message(message, bot_id):
         )
         + records(message),
     )
+
+
+def readable_mentions(text, guild):
+    """Turn user/role pings into plain "@name" text so repeating never pings."""
+
+    def user(match):
+        member = guild.get_member(int(match.group(1))) if guild else None
+        return f"@{member.display_name}" if member else "@某人"
+
+    def role(match):
+        found = guild.get_role(int(match.group(1))) if guild else None
+        return f"@{found.name}" if found else "@某個身分組"
+
+    text = re.sub(r"<@&(\d+)>", role, text)
+    return re.sub(r"<@!?(\d+)>", user, text)

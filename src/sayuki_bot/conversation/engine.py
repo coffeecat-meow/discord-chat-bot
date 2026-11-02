@@ -503,7 +503,10 @@ class Engine:
         if turn.cancelled:
             return
         if turn.reason == "echo":
-            await self.delivery.send_text(turn, turn.event.text)
+            from sayuki_bot.discord.events import readable_mentions
+
+            guild = self.delivery.bot.get_guild(turn.event.guild_id)
+            await self.delivery.send_text(turn, readable_mentions(turn.event.text, guild))
             return
         if self.context:
             await self.context.prepare(turn)
