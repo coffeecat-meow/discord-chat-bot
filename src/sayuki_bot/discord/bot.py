@@ -21,7 +21,7 @@ from sayuki_bot.discord.access import Access
 from sayuki_bot.llm.client import ModelClient
 from sayuki_bot.memory.service import MemoryService
 from sayuki_bot.memory.background import BackgroundMemory
-from sayuki_bot.storage.database import Database
+from sayuki_bot.storage.database import Database, stable_attachments
 from sayuki_bot.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -231,25 +231,40 @@ class SayukiBot(commands.Bot):
         self.engine.invalidate_source(payload.message_id)
 
     async def on_raw_message_edit(self, payload):
-        self.db.invalidate_event(payload.message_id, deleted=False)
-        if payload.channel_id in self.history:
-            self.history[payload.channel_id] = deque(
-                (x for x in self.history[payload.channel_id] if x.id != payload.message_id),
-                maxlen=200,
-            )
-        self.engine.invalidate_source(payload.message_id)
-        # Refresh stored source without triggering another reply.
-        if payload.guild_id not in self.runtime_guilds:
+        # Discord also sends updates for link previews, pins and our own panel
+        # edits. Only a real text/attachment change may invalidate sources,
+        # memories and in-flight replies.
+        message = payload.message
+        if (
+            not self.user
+            or payload.guild_id not in self.runtime_guilds
+            or (message.author.bot and message.author.id != self.user.id)
+        ):
             return
-        channel = self.get_channel(payload.channel_id)
-        if channel:
-            try:
-                msg = await channel.fetch_message(payload.message_id)
-                event = event_from_message(msg, self.user.id)
-                self.db.record_event(event)
-                self.history[payload.channel_id].append(event)
-            except discord.HTTPException:
-                pass
+        event = event_from_message(message, self.user.id)
+        history = self.history.get(payload.channel_id, ())
+        old = next((x for x in history if x.id == event.id), None)
+        stored = self.db.connection.execute(
+            "SELECT text,attachments FROM events WHERE id=? AND deleted=0", (str(event.id),)
+        ).fetchone()
+        current = (event.text, stable_attachments(list(event.attachments)))
+        if old is not None:
+            changed = (old.text, stable_attachments(list(old.attachments))) != current
+        elif stored is not None:
+            changed = (stored["text"], stable_attachments(stored["attachments"])) != current
+        else:
+            changed = False  # never seen, so nothing can depend on it
+        if not changed:
+            return
+        logger.info("訊息已編輯，重新整理來源 message=%s", event.id)
+        self.db.invalidate_event(event.id, deleted=False)
+        self.engine.invalidate_source(event.id)
+        # Refresh stored source without triggering another reply; keep order.
+        self.db.record_event(event)
+        if old is not None:
+            self.history[payload.channel_id] = deque(
+                (event if x.id == event.id else x for x in history), maxlen=200
+            )
 
     async def maintenance(self):
         previous_sleep = None

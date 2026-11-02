@@ -15,6 +15,21 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def stable_attachments(attachments) -> list:
+    """Attachment identity without Discord's expiring CDN signature (?ex=&is=&hm=).
+
+    A refetched message carries freshly signed URLs; that is not an edit.
+    """
+    if isinstance(attachments, str):
+        attachments = json.loads(attachments or "[]")
+    return [
+        {**item, "url": str(item.get("url", "")).split("?", 1)[0]}
+        if isinstance(item, dict)
+        else item
+        for item in attachments
+    ]
+
+
 class Database:
     def __init__(self, path: Path | str, *, diagnostic_retention_days=30):
         if type(diagnostic_retention_days) is not int or diagnostic_retention_days <= 0:
@@ -154,7 +169,10 @@ class Database:
         previous = self.connection.execute(
             "SELECT text,attachments FROM events WHERE id=?", (str(event.id),)
         ).fetchone()
-        if previous and (previous["text"] != event.text or previous["attachments"] != attachments):
+        if previous and (
+            previous["text"] != event.text
+            or stable_attachments(previous["attachments"]) != stable_attachments(attachments)
+        ):
             self.invalidate_event(event.id, deleted=False)
         with self.connection:
             self.connection.execute(
