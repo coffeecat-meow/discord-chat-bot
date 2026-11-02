@@ -1,0 +1,8 @@
+sdk_client_base_url: https://opencode.ai/zen/go/v1/
+chat#1 {"ok": true, "text": "OK", "text_chars": 2, "finish_reason": "stop", "usage_tokens": {"prompt_tokens": 47, "completion_tokens": 15, "total_tokens": 62}}
+attention#1 {"ok": true, "text": "OK", "text_chars": 2, "finish_reason": "stop", "usage_tokens": {"prompt_tokens": 22, "completion_tokens": 2, "total_tokens": 24}}
+http_calls: 2
+  {"method": "POST", "host": "opencode.ai", "path": "/zen/go/v1/chat/completions", "user_agent": "sayuki-discord/4.6", "x_opencode_session_present": true, "authorization_present": true, "body_model": "deepseek-v4.1-flash", "body_keys": ["max_tokens", "model", "temperature"], "max_tokens": 8192, "temperature": 0.65, "thinking": null, "reasoning_effort": null, "reasoning": null, "status": 200, "response_model": "deepseek-v4.1-flash", "response_finish_reason": "stop"}
+  {"method": "POST", "host": "opencode.ai", "path": "/zen/go/v1/chat/completions", "user_agent": "sayuki-discord/4.6", "x_opencode_session_present": true, "authorization_present": true, "body_model": "deepseek-v4.1-flash", "body_keys": ["max_tokens", "model", "temperature", "thinking"], "max_tokens": 512, "temperature": 0.1, "thinking": {"type": "disabled"}, "reasoning_effort": null, "reasoning": null, "status": 200, "response_model": "deepseek-v4.1-flash", "response_finish_reason": "stop"}
+ usage probe-chat-1 chat deepseek-v4.1-flash 1866.0ms {'route': 'primary', 'endpoint': 'https://opencode.ai/zen/go/v1', 'finish_reason': 'stop', 'error_type': None}
+ usage probe-attention-1 attention deepseek-v4.1-flash 1542.0ms {'route': 'primary', 'endpoint': 'https://opencode.ai/zen/go/v1', 'finish_reason': 'stop', 'error_type': None}

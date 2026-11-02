@@ -1,0 +1,72 @@
+{
+  "version": "4.6.0rc1",
+  "scope": "simulation RC only",
+  "items": [
+    {
+      "id": "D01",
+      "requirement": "simulation-tested deployable RC",
+      "status": "passed",
+      "evidence": "evals/results/rc-final-test-summary-2026-10-17.json"
+    },
+    {
+      "id": "D02",
+      "requirement": "engineering/source/action contracts; semantic limits recorded",
+      "status": "passed-with-documented-semantic-limits",
+      "evidence": "evals/results/rc-group-delivered-review-2026-10-17.json"
+    },
+    {
+      "id": "D03",
+      "requirement": "bounded background enabled after source and extraction validation",
+      "status": "passed",
+      "evidence": "evals/results/rc-background-literal-live-2026-10-17.json"
+    },
+    {
+      "id": "D04",
+      "requirement": "fresh deployment database; originals not migrated",
+      "status": "passed",
+      "evidence": "evals/results/rc-original-integrity-2026-10-17.json"
+    },
+    {
+      "id": "D05",
+      "requirement": "raw/long memory retained; diagnostics30days; eventTTL recall only",
+      "status": "passed",
+      "evidence": "evals/results/rc-final-test-summary-2026-10-17.json"
+    },
+    {
+      "id": "D06",
+      "requirement": "erase barrier requires explicit self restore consent",
+      "status": "passed",
+      "evidence": "evals/results/rc-mutations-quota-final-2026-10-17.json"
+    },
+    {
+      "id": "D07",
+      "requirement": "minimal validated bugfixes integrated; rejected research stays isolated",
+      "status": "passed",
+      "evidence": "evals/results/rc-final-source-static-2026-10-17.json"
+    },
+    {
+      "id": "ROUTES",
+      "requirement": "independent chat/light/vision models/endpoints/key names and configured priority",
+      "status": "passed-with-mock-fallback",
+      "evidence": "evals/results/rc-final-wheel-routing-tests-2026-10-17.log"
+    },
+    {
+      "id": "BACKGROUND-8192",
+      "requirement": "approved low/8192, enabled only after revalidation",
+      "status": "passed",
+      "evidence": "evals/results/rc-final-wheel-quota-tests-2026-10-17.log"
+    }
+  ],
+  "actual_model_api": "OpenCode Go DS V4.1",
+  "actual_openrouter_calls": 0,
+  "private_card_changed": false,
+  "deployed": false,
+  "not_verified": [
+    "Discord D01-D14",
+    "Debian/Linux Python3.12",
+    "actual OpenRouter fallback",
+    "cross-day real-group experience",
+    "real legacy migration/service cutover"
+  ],
+  "no_new_decision_pending": true
+}

@@ -1,0 +1,1 @@
+Synthetic connectivity probe persona. Not used by the bot.

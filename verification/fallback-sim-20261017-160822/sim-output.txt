@@ -1,0 +1,11 @@
+PASS 1 primary success -> Go only, OR not called  [hosts=['opencode.ai']]
+PASS 2 Go connect error -> one OR fallback, success from OR  [hosts=['opencode.ai', 'openrouter.ai']]
+PASS 2b model_failover trace recorded, no key inside  [{"role": "chat", "phase": "normal", "from_endpoint": "https://opencode.ai/zen/go/v1", "to_endpoint": "https://openrouter.ai/api/v1", "error_type": "APIConnectionError", "status_code": null}]
+PASS 2c Go request: own model/key/UA/session header, no OR fields
+PASS 2d OR request: own model/key, no Go UA/session header  [{"host": "openrouter.ai", "model": "deepseek/deepseek-v4.1-flash:floor", "key": "or", "ua": "AsyncOpenAI/Python 2.54.", "session_hdr": false, "thinking": null, "reasoning_effort": null, "reasoning": null, "max_tokens": 8192}]
+PASS 3 Go HTTP 503 -> one OR fallback  [hosts=['opencode.ai', 'openrouter.ai'] status=503]
+PASS 4a attention: Go thinking.disabled / OR reasoning.enabled=false  [go={'type': 'disabled'} or={'enabled': False}]
+PASS 4b memory: Go reasoning_effort=low / OR reasoning.effort=low, 8192 tokens  [go=low or={'effort': 'low'}]
+PASS 5 cancel during Go call -> CancelledError, OR not called  [hosts=['opencode.ai']]
+PASS 6 Go+OR both fail -> exception, no reply, fallback_failed trace  [error=InternalServerError traces=['model_failover', 'model_fallback_failed']]
+SUMMARY 10/10 passed

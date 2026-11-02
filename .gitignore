@@ -1,0 +1,17 @@
+# 執行環境與機密
+.venv/
+.env
+__pycache__/
+*.pyc
+
+# 執行時產生的資料
+data/
+logs/
+backups/
+verification/**/*.sqlite3
+
+# 大型二進位檔與發佈包
+bin/obscura
+bin/obscura-worker
+*.zip
+*.whl

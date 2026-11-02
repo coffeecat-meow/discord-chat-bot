@@ -1,0 +1,38 @@
+{
+  "version": "4.6.0rc1",
+  "status": "passed",
+  "tests_run": 1644,
+  "modules": 142,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "expected_failures": 0,
+  "unexpected_successes": 0,
+  "shards": [
+    {
+      "path": "evals/results/rc-final-r2-tests-s0-2026-10-17.json",
+      "sha256": "524a90008600fb1203d66250d629d19236a0ca61deff6648b5a7b1124a491e7b",
+      "tests_run": 538,
+      "elapsed_seconds": 621.0587422499957
+    },
+    {
+      "path": "evals/results/rc-final-r2-tests-s1-2026-10-17.json",
+      "sha256": "67a1964ecc0e9a6ec96a7cbf829c9f182f2232f031575eafc7cad57bd2d475dd",
+      "tests_run": 593,
+      "elapsed_seconds": 1011.6195259579981
+    },
+    {
+      "path": "evals/results/rc-final-r2-tests-s2-2026-10-17.json",
+      "sha256": "f8a638f3dc476114911fe013805b9ff65140e77257119b753d72d2c1a9e47044",
+      "tests_run": 513,
+      "elapsed_seconds": 946.8290631249984
+    }
+  ],
+  "test_id_overlap": 0,
+  "module_omissions": 0,
+  "source_hashes_identical_all_shards": true,
+  "source_still_matches": true,
+  "guarded_source_files": 522,
+  "real_api_requested": false,
+  "note": "Three process shards share one exact source snapshot; union is all discovered tests. Counts are not summed with overlapping targeted checks."
+}

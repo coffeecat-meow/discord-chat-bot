@@ -1,0 +1,136 @@
+[discord]
+admin_ids = []
+trusted_guild_ids = []
+aliases = ["紗月", "sayuki"]
+
+[paths]
+persona = "persona/systemprompt.txt"
+database = "data/sayuki.sqlite3"
+
+[storage]
+diagnostic_retention_days = 30 # 只清 traces／usage，原文與長期記憶不按此期限刪除
+
+[model]
+attention_max_output_tokens = 512
+attention_reasoning_enabled = false # 只關閉接話分類推理；聊天／記憶／任務各自設定不變
+attention_reasoning_effort = "low" # 僅 attention_reasoning_enabled=true 時生效
+# task_max_output_tokens = 8192 # 未設定沿用聊天輸出上限
+# task_reasoning_effort = "" # 未設定沿用聊天推理設定
+reasoning_effort = "" # empty uses provider default
+memory_reasoning_effort = "low" # background extraction only; empty uses provider default
+max_output_tokens = 8192
+memory_max_output_tokens = 8192 # background only; shared with reasoning, does not raise chat budget
+temperature = 0.65
+timeout_seconds = 90
+
+# 每組主／備模型與 key 都可獨立配置，順序不寫死於程式。
+# key 只填環境變數名稱，實際值放部署 root 的 .env。
+# 新 routes 模式每端只送一次；兩端共用 timeout_seconds。
+[model.routes.chat.primary]
+base_url = "https://opencode.ai/zen/go/v1"
+model = "deepseek-v4.1-flash"
+api_key_env = "OPENCODE_API_KEY"
+api_format = "opencode"
+
+[model.routes.chat.fallback]
+enabled = true
+base_url = "https://openrouter.ai/api/v1"
+model = "deepseek/deepseek-v4.1-flash:floor"
+api_key_env = "OPENROUTER_API_KEY"
+api_format = "openrouter"
+
+# 小模型：普通接話分類及背景摘要／畫像；不改聊天 RP 模型。
+[model.routes.light.primary]
+base_url = "https://opencode.ai/zen/go/v1"
+model = "deepseek-v4.1-flash"
+api_key_env = "OPENCODE_API_KEY"
+api_format = "opencode"
+
+[model.routes.light.fallback]
+enabled = true
+base_url = "https://openrouter.ai/api/v1"
+model = "deepseek/deepseek-v4.1-flash:floor"
+api_key_env = "OPENROUTER_API_KEY"
+api_format = "openrouter"
+
+[model.routes.vision.primary]
+base_url = "https://opencode.ai/zen/go/v1"
+model = "deepseek-v4.1-flash"
+api_key_env = "OPENCODE_API_KEY"
+api_format = "opencode"
+
+[model.routes.vision.fallback]
+enabled = true
+base_url = "https://openrouter.ai/api/v1"
+model = "deepseek/deepseek-v4.1-flash:floor"
+api_key_env = "OPENROUTER_API_KEY"
+api_format = "openrouter"
+
+# task 未設獨立 routes 時沿用 chat；memory 沿用 light。
+# 可另外配置 model.routes.task 或 model.routes.memory 的 primary/fallback。
+
+[sleep]
+enabled = true
+start = "00:30"
+end = "08:00"
+timezone = "Asia/Taipei"
+status = "悄悄去睡覺了 (＿ ＿)zZ"
+
+[conversation]
+history_limit = 25
+history_chars = 14000
+# Full JSON record budgets; reply source is separate from history.
+reply_source_chars = 1000
+reply_fetch_timeout_seconds = 2.0
+# Cumulative across every tool continuation within one turn.
+tool_merge_chars = 1500
+tool_merge_messages = 5
+max_queue = 5
+max_tool_rounds = 3
+max_tools_per_round = 5
+continuation_enabled = true
+continuation_window_seconds = 120 # 且只看當前訊息之前最近 12 則
+cross_channel_window_seconds = 600 # 共享頻道內的明確接續／邀請轉場線索
+continuation_timeout_seconds = 8 # 失敗／逾時不強制插話
+proactive_enabled = true
+proactive_cooldown_seconds = 120
+proactive_min_users = 4
+echo_enabled = true
+echo_window_seconds = 60
+echo_min_users = 3
+
+[delivery]
+typing_seconds_per_char = 0.1
+typing_max_seconds = 2.0
+wait_typing_min = 0.8
+wait_typing_max = 2.0
+wait_pause_min = 3.0
+wait_pause_max = 8.0
+
+[tools]
+compact = true
+max_result_chars = 10000
+obscura_bin = "bin/obscura"
+
+[memory]
+background_enabled = true # RC: bounded extraction after replies; shared channels still explicit
+batch_messages = 40
+min_interval_seconds = 600
+summary_chars = 2500
+profile_chars = 3000
+self_chars = 2000 # 分類與來源原文的完整JSON預算；省略不刪資料
+self_limit = 12
+short_ttl_hours = 24
+background_daily_calls = 20
+# Until sharing policy is confirmed, automatic recall remains channel-local.
+shared_channel_ids = []
+
+[reminders]
+# 已確認：睡眠中的到期提醒延到清醒後。
+during_sleep = false
+
+[tasks]
+# 與一般聊天共用頻道佇列；最多 6 次工具接續、7 次主模型生成。
+max_tool_rounds = 6
+# 出列開始計時，包含查詢與發送；取消不撤回已完成操作。
+timeout_seconds = 180

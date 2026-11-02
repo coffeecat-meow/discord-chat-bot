@@ -1,0 +1,8 @@
+{
+  "original_manifest_files": 97,
+  "original_manifest_drift": [],
+  "baseline_zip_sha256": "b63825ca76f272a82fbc3a80384bf843af6270346c161eea839fb572a7188857",
+  "baseline_zip_matches_prior": true,
+  "persona_sha256": "fec2d455d91d86320afe1c0618a9aab3452387bfd7803e22c6dcec8bbcf864eb",
+  "persona_matches_rc_before": true
+}
