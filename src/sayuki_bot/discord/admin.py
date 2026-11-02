@@ -172,19 +172,171 @@ def register_admin(bot):
         ).fetchall()
         return [r[0] for r in rows]
 
-    @group.command(name="debug_last", description="檢視最近回合各階段時間")
+    REASONS = {
+        "message": "一般訊息",
+        "mention": "被提及",
+        "name": "被叫名字",
+        "reply": "回覆她的訊息",
+        "proactive": "主動查看",
+        "continuation": "接續對話",
+        "cross_continuation": "跨頻道接續",
+        "echo": "跟著複誦",
+        "interaction": "按鈕／面板互動",
+        "task": "任務",
+        "reminder": "提醒",
+    }
+    OUTCOMES = {
+        "completed": "完成",
+        "cancelled": "已取消",
+        "deferred": "延後（睡眠中）",
+        "timed_out": "任務逾時",
+        "failed_generation": "模型沒有可用回覆",
+        "failed_verification": "原訊息驗證未通過",
+        "error": "程式錯誤",
+        "stopped": "中途停止",
+    }
+    TOOL_STATUS = {
+        "ok": "成功",
+        "rejected": "被拒絕（未執行）",
+        "unavailable": "無法使用",
+        "unknown": "不確定是否完成",
+        "not_applied": "未套用",
+        "already_attempted": "重複呼叫已略過",
+        "limit": "超過單輪上限",
+    }
+
+    def taipei(value):
+        from zoneinfo import ZoneInfo
+
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        return value.astimezone(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+
+    def seconds(ms):
+        return f"{(ms or 0) / 1000:.1f}秒"
+
+    def trace_summary(turn_id):
+        rows = bot.db.connection.execute(
+            "SELECT stage,data,created_at FROM traces WHERE turn_id=? ORDER BY id", (turn_id,)
+        ).fetchall()
+        stages = [(r["stage"], json.loads(r["data"] or "{}"), r["created_at"]) for r in rows]
+        lines = []
+        started = next((datetime.fromisoformat(t) for s, _, t in stages if s == "started"), None)
+        first = next((datetime.fromisoformat(t) for s, _, t in stages if s == "first_visible"), None)
+        finished = next((d for s, d, _ in stages if s == "finished"), None)
+        timing = []
+        if started and first:
+            timing.append(f"第一段送出 {(first - started).total_seconds():.1f}秒")
+        if finished:
+            timing.append(f"共{finished.get('visible_chunks', 0)}段")
+            timing.append(f"總計 {seconds(finished.get('duration_ms'))}")
+        if timing:
+            lines.append("耗時：" + "、".join(timing))
+        for stage, data, _ in stages:
+            if stage == "model_failover":
+                lines.append(
+                    f"模型切換備援：{data.get('role')} {data.get('error_type')}"
+                    + (f"（{data['status_code']}）" if data.get("status_code") else "")
+                )
+            elif stage in {"model_fallback_failed", "model_fallback_unavailable"}:
+                lines.append(f"備援模型也失敗：{data.get('role')} {data.get('error_type')}")
+            elif stage == "unusable_completion":
+                lines.append(f"模型回覆不可用：{data.get('reason') or data.get('finish_reason')}")
+            elif stage == "cap_closeout":
+                lines.append(f"工具輪數用完，改為收尾回覆（{data.get('reason')}）")
+        return stages, lines
+
+    def channel_label(guild, channel_id):
+        channel = guild.get_channel_or_thread(int(channel_id)) if guild else None
+        return f"#{channel.name} ({channel_id})" if channel else str(channel_id)
+
+    def format_debug(guild, turn):
+        record = turn.debug
+        event = turn.event
+        sent = record.get("sent", [])
+        rounds = record.get("rounds", [])
+        lines = [
+            f"時間：{taipei(record.get('started_at', event.created_at))}",
+            f"觸發原因：{REASONS.get(turn.reason, turn.reason)}",
+            f"頻道：{channel_label(guild, event.channel_id)}",
+            f"使用者：{event.author_name} ({event.author_id})",
+            f"訊息ID：{event.id}",
+            f"結果：{OUTCOMES.get(record.get('outcome'), record.get('outcome', '進行中'))}"
+            + (f"（{record['error_type']}）" if record.get("error_type") else ""),
+            f"是否回覆：{'是' if sent or record.get('aux_sent') else '否'}",
+            f"是否NO_NEED：{'是' if any(r.get('silence') for r in rounds) else '否'}",
+        ]
+        if record.get("stop_reason"):
+            lines.append(f"停止原因：{preview(record['stop_reason'], 300)}")
+        if record.get("delivery_uncertain"):
+            lines.append("送達狀態：不確定（可能部分送出）")
+        participation = record.get("participation")
+        if participation:
+            lines.append(
+                f"接話判斷：{'要接' if participation.get('should_reply') else '不接'}"
+                f"（{participation.get('status', '')}）"
+            )
+        lines.append(f"原始訊息：{preview(event.text, 500)}")
+        if not rounds:
+            lines.append("模型回覆：未呼叫模型")
+        for item in rounds:
+            label = "初次模型回覆" if item["round"] == 1 else f"第{item['round']}輪模型回覆"
+            lines.append(f"{label}：{preview(item['response'], 500) or '（空白）'}")
+            if item.get("finish_reason") == "length":
+                lines.append("  ⚠ 輸出長度用完被截斷")
+            for error in item.get("errors", []):
+                lines.append(f"  ⚠ 格式錯誤：{error}")
+            for tool in item.get("tools", []):
+                status = TOOL_STATUS.get(tool["status"], tool["status"])
+                lines.append(f"- 工具 {tool['tool']}（{preview(tool['args'], 200)}）：{status}")
+                if tool["detail"]:
+                    lines.append(f"  結果：{preview(tool['detail'], 300)}")
+        for aux in record.get("aux_sent", []):
+            lines.append(f"另外送到 {channel_label(guild, aux['channel_id'])}：{preview(aux['text'], 300)}")
+        lines.append(f"最後回覆：{preview(chr(10).join(sent), 800) if sent else '（沒有送出）'}")
+        _, summary = trace_summary(record.get("turn_id", turn.id))
+        lines.extend(summary)
+        return "\n".join(lines)
+
+    def preview(text, limit):
+        text = (text or "").strip()
+        return text if len(text) <= limit else text[:limit] + "…"
+
+    @group.command(name="debug_last", description="查看最近一次處理的debug摘要")
     async def debug_last(interaction: discord.Interaction):
         if not await admin(interaction):
             return
-        ids = turn_ids(interaction.guild.id, 1)
-        rows = (
-            bot.db.connection.execute(
-                "SELECT stage,data,created_at FROM traces WHERE turn_id=? ORDER BY id", (ids[0],)
-            ).fetchall()
-            if ids
-            else []
-        )
-        await show(interaction, [dict(r) for r in rows])
+        turn = bot.engine.last_debug.get(interaction.guild.id)
+        if turn is not None:
+            text = format_debug(interaction.guild, turn)
+        else:
+            # After a restart only timing traces survive; summarise them instead.
+            ids = turn_ids(interaction.guild.id, 1)
+            if not ids:
+                await interaction.response.send_message("目前沒有debug紀錄。", ephemeral=True)
+                return
+            stages, summary = trace_summary(ids[0])
+            queued = next((d for s, d, _ in stages if s == "queued"), {})
+            lines = [
+                "（重啟後還沒處理過新回合，只剩各階段時間，沒有對話內容）",
+                f"時間：{taipei(stages[0][2])}" if stages else "",
+                f"觸發原因：{REASONS.get(queued.get('reason'), queued.get('reason', '未記錄'))}",
+                f"頻道：{channel_label(interaction.guild, queued['channel_id'])}"
+                if queued.get("channel_id")
+                else "",
+                *summary,
+            ]
+            text = "\n".join(line for line in lines if line)
+        if len(text) <= 1900:
+            await interaction.response.send_message(f"```text\n{text}\n```", ephemeral=True)
+        else:
+            import io
+
+            await interaction.response.send_message(
+                "內容較長，完整內容在附件",
+                file=discord.File(io.BytesIO(text.encode()), filename="sayuki-debug.txt"),
+                ephemeral=True,
+            )
 
     @group.command(name="logs", description="檢視近期模型用量與錯誤，不包含角色卡")
     async def logs(interaction: discord.Interaction):

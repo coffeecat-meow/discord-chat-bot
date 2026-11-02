@@ -33,6 +33,12 @@ def prepare(executor, turn, name, arguments):
         from .protocol import auxiliary_parts
 
         auxiliary_parts(arguments["content"])
+    if name == "SEND_CHANNEL_MESSAGE":
+        # Destination scope is known before anything is sent; rejecting here
+        # keeps a denied channel a clean non-write instead of an unknown receipt.
+        target = executor.access.channel(turn, int(arguments["channel_id"]))
+        if not target.permissions_for(executor.access.requester(turn)).send_messages:
+            raise PermissionError("Cannot send in destination")
 
 
 async def run(executor, turn, name, a):

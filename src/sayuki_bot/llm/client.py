@@ -13,6 +13,7 @@ from uuid import uuid4, uuid5
 
 from sayuki_bot.conversation.models import Generation
 from sayuki_bot.llm.routing import route, validate_routes
+from sayuki_bot.storage import jsonl_log
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ class ModelClient:
             )
         try:
             return await self._attempt(
-                primary, args, turn_id, role, total * 0.6 if ready else total
+                primary, args, turn_id, role, total * 0.6 if ready else total, phase=phase
             )
         except Exception as exc:
             # Only remote/transport failures qualify. Control exceptions,
@@ -300,7 +301,7 @@ class ModelClient:
                 raise TimeoutError("Model failover deadline exhausted") from exc
             args, _ = self._arguments(messages, backup, role, phase)
             try:
-                return await self._attempt(backup, args, turn_id, role, left)
+                return await self._attempt(backup, args, turn_id, role, left, phase=phase)
             except Exception as fallback_error:
                 self.db.trace(
                     turn_id,
@@ -312,8 +313,45 @@ class ModelClient:
                 )
                 raise
 
-    async def _attempt(self, selected, args, turn_id, role, timeout):
+    def _log_invocation(self, selected, args, turn_id, role, phase, started_at, start, *,
+                        output="", error=None, usage=None):
+        messages, input_chars, system_chars = jsonl_log.messages_for_log(args.get("messages", []))
+        usage = usage or {}
+        jsonl_log.write(
+            "invocation",
+            {
+                "log_type": "llm_call",
+                "time": started_at,
+                "turn_id": turn_id,
+                "call_type": role if phase == "normal" else f"{role}:{phase}",
+                "route": selected.slot,
+                "endpoint": selected.base_url,
+                "model": selected.model,
+                "max_tokens": args.get("max_tokens"),
+                "temperature": args.get("temperature"),
+                "reasoning_effort": args.get("reasoning_effort"),
+                "extra_body": args.get("extra_body"),
+                "success": error is None,
+                "duration_ms": round((perf_counter() - start) * 1000, 2),
+                "finish_reason": usage.get("finish_reason"),
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": usage.get("completion_tokens"),
+                "cost": usage.get("cost"),
+                "input_chars_without_system": input_chars,
+                "system_prompt_chars": system_chars,
+                "output_chars": len(output or ""),
+                "messages": messages,
+                "output": output or "",
+                "error": ""
+                if error is None
+                else f"{type(error).__name__}: {error}"[:1000],
+                "status_code": getattr(error, "status_code", None),
+            },
+        )
+
+    async def _attempt(self, selected, args, turn_id, role, timeout, *, phase="normal"):
         start = perf_counter()
+        started_at = jsonl_log.now()
         client = self._get_client(selected)
         if selected.api_format == "opencode":
             # SDK transport metadata stays out of the completion JSON contract.
@@ -328,7 +366,8 @@ class ModelClient:
                 )
         try:
             response = await asyncio.wait_for(client.chat.completions.create(**args), timeout)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
+            self._log_invocation(selected, args, turn_id, role, phase, started_at, start, error=exc)
             self.db.record_usage(
                 turn_id,
                 role,
@@ -342,6 +381,7 @@ class ModelClient:
             )
             raise
         except Exception as exc:
+            self._log_invocation(selected, args, turn_id, role, phase, started_at, start, error=exc)
             self.db.record_usage(
                 turn_id,
                 role,
@@ -365,6 +405,10 @@ class ModelClient:
         self.db.record_usage(turn_id, role, selected.model, (perf_counter() - start) * 1000, usage)
         choice = response.choices[0] if shape["choices"] else None
         content = getattr(getattr(choice, "message", None), "content", None)
+        self._log_invocation(
+            selected, args, turn_id, role, phase, started_at, start,
+            output=content if isinstance(content, str) else "", usage=usage,
+        )
         # Keep length handling in the engine; do not retry an exhausted output
         # allowance or reinterpret a provider refusal/filter as deliberate silence.
         if (

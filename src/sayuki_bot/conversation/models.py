@@ -54,6 +54,7 @@ class Turn:
     empty_retries: int = 0
     verification: dict | None = None
     continuation: ContinuationState | None = None
+    debug: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

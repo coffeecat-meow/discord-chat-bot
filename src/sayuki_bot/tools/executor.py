@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from uuid import uuid4
 
 from .registry import REGISTRY
+
+logger = logging.getLogger(__name__)
+
+
+def _short(value, limit=300):
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 class ToolExecutor:
@@ -20,8 +28,25 @@ class ToolExecutor:
         )
 
     async def execute(self, turn, name, body):
+        report = await self._execute(turn, name, body)
+        status = report.get("status")
+        if status == "ok":
+            logger.info(
+                "工具 %s 成功 turn=%s 參數=%s 結果=%s",
+                name, turn.id, _short(body, 200), _short(report.get("result", ""), 200),
+            )
+        else:
+            logger.warning(
+                "工具 %s %s turn=%s 參數=%s 原因=%s",
+                name, status, turn.id, _short(body, 200),
+                _short(report.get("error") or report.get("result", ""), 500),
+            )
+        return report
+
+    async def _execute(self, turn, name, body):
         tool = REGISTRY[name]
         attempted = False
+        logged = False
         try:
             args = tool.parse(body)
             if tool.action and turn.cancelled:
@@ -60,6 +85,11 @@ class ToolExecutor:
                     return {"status": "rejected", "tool": name, "error": str(exc)}
                 if tool.action:
                     self.db.settle(key, "unknown", type(exc).__name__)
+                if isinstance(exc, Exception) and not isinstance(
+                    exc, (ValueError, PermissionError, KeyError)
+                ):
+                    logger.exception("工具 %s 執行時發生例外 turn=%s", name, turn.id)
+                    logged = True
                 raise
             if tool.action:
                 if isinstance(result, dict) and result.get("status") == "ignored":
@@ -74,6 +104,8 @@ class ToolExecutor:
                 "error": str(exc),
             }
         except Exception as exc:
+            if not logged:
+                logger.exception("工具 %s 準備時發生例外 turn=%s", name, turn.id)
             return {
                 "status": "unknown" if tool.action else "unavailable",
                 "tool": name,

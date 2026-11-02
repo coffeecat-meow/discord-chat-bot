@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from time import perf_counter
 
 from sayuki_bot.tools.protocol import visible_segments
+
+
+logger = logging.getLogger(__name__)
 
 
 class DeliveryStopped(RuntimeError):
@@ -92,6 +96,10 @@ class Delivery:
                     self.db.settle(key, "unknown", type(exc).__name__)
                     if isinstance(exc, asyncio.CancelledError):
                         raise
+                    logger.warning(
+                        "訊息送出失敗 turn=%s channel=%s: %s: %s",
+                        turn.id, getattr(channel, "id", "?"), type(exc).__name__, exc,
+                    )
                     raise DeliveryStopped("delivery outcome unknown") from exc
                 self.db.settle(key, "sent", getattr(message, "id", ""))
                 self.db.trace(

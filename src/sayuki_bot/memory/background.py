@@ -285,12 +285,12 @@ class BackgroundMemory:
                 role="memory",
             )
             if response.finish_reason == "length":
-                self.memory.db.trace(
+                self._trace_memory(turn, 
                     turn.id, "memory_extraction", {"status": "truncated", "applied": 0}
                 )
                 return False
             if response.finish_reason != "stop":
-                self.memory.db.trace(
+                self._trace_memory(turn, 
                     turn.id,
                     "memory_extraction",
                     {
@@ -301,7 +301,7 @@ class BackgroundMemory:
                 )
                 return False
             if not channels <= self.readable_channels(events):
-                self.memory.db.trace(
+                self._trace_memory(turn, 
                     turn.id,
                     "memory_extraction",
                     {
@@ -347,7 +347,7 @@ class BackgroundMemory:
                 or (tuple(current_summary) if current_summary else None)
                 != (tuple(previous) if previous else None)
             ):
-                self.memory.db.trace(
+                self._trace_memory(turn, 
                     turn.id,
                     "memory_extraction",
                     {
@@ -459,7 +459,7 @@ class BackgroundMemory:
                     applied += 1
                 else:
                     rejected.append(result.get("reason", "not_applied"))
-            self.memory.db.trace(
+            self._trace_memory(turn, 
                 turn.id, "memory_extraction", {"applied": applied, "rejected": rejected}
             )
             if isinstance(summary, str) and complete_dependencies:
@@ -480,7 +480,7 @@ class BackgroundMemory:
                 )
             return True
         except (ValueError, PermissionError) as exc:
-            self.memory.db.trace(
+            self._trace_memory(turn, 
                 turn.id,
                 "memory_extraction",
                 {
@@ -493,6 +493,26 @@ class BackgroundMemory:
         except Exception:
             logger.exception("Background memory failed without blocking chat")
             return False
+
+    def _trace_memory(self, turn, turn_id, stage, data):
+        from sayuki_bot.storage import jsonl_log
+
+        self.memory.db.trace(turn_id, stage, data)
+        logger.info(
+            "背景記憶 channel=%s turn=%s %s", turn.event.channel_id, turn_id,
+            json.dumps(data, ensure_ascii=False),
+        )
+        jsonl_log.write(
+            "memory",
+            {
+                "log_type": "memory_extraction",
+                "time": jsonl_log.now(),
+                "turn_id": turn_id,
+                "guild_id": str(turn.event.guild_id),
+                "channel_id": str(turn.event.channel_id),
+                **data,
+            },
+        )
 
     async def close(self):
         tasks = list(self.tasks.values())

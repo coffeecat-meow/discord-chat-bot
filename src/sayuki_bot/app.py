@@ -40,6 +40,16 @@ def main():
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    from pathlib import Path
+
+    from sayuki_bot.storage import jsonl_log
+
+    log_dir = Path(config.get("logs", "directory", "logs")).expanduser()
+    jsonl_log.configure(
+        log_dir if log_dir.is_absolute() else config.root / log_dir,
+        tz=config.sleep.timezone,
+        max_mb=config.get("logs", "max_mb", 50),
+    )
     from sayuki_bot.discord.bot import SayukiBot
     from sayuki_bot.storage.instance_lock import DatabaseLock
 

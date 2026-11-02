@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 from sayuki_bot.tools.results import bounded_reports
@@ -13,11 +14,18 @@ from sayuki_bot.delivery.service import DeliveryStopped
 from sayuki_bot.llm.client import EmptyCompletion, supports_final_tool_reasoning
 from sayuki_bot.tools.protocol import parse
 from sayuki_bot.tools.registry import REGISTRY
+from sayuki_bot.storage import jsonl_log
 from . import closeout
 from .verification import Verification
 from .continuation import ContinuationState
 
 logger = logging.getLogger(__name__)
+
+
+def _preview(value, limit=300):
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 class Engine:
@@ -31,6 +39,8 @@ class Engine:
         self.closed = False
         self.context = None
         self.task_runs = {}
+        # Latest turn per guild for /sayuki debug_last; memory only, never stored.
+        self.last_debug = {}
 
     def submit(self, turn):
         if self.closed:
@@ -64,6 +74,12 @@ class Engine:
                 self.active[key] = turn
                 started = perf_counter()
                 self.delivery.db.trace(turn.id, "started")
+                turn.debug.update(
+                    turn_id=turn.id,
+                    started_at=datetime.now(timezone.utc),
+                    rounds=turn.debug.get("rounds", []),
+                )
+                error_type = None
                 successful = False
                 timed_out = False
                 deferred = False
@@ -95,17 +111,22 @@ class Engine:
                         or any(x != "live_verified" for x in turn.verification["outcomes"].values())
                     )
                     successful = not turn.cancelled
-                except DeliveryStopped:
+                except DeliveryStopped as exc:
+                    turn.debug["stop_reason"] = str(exc) or "cancelled"
                     logger.warning(
-                        "Turn stopped after cancellation or uncertain delivery: %s", turn.id
+                        "Turn stopped after cancellation or uncertain delivery: %s (%s)",
+                        turn.id,
+                        exc or "cancelled",
                     )
-                except EmptyCompletion:
+                except EmptyCompletion as exc:
                     failed_generation = True
+                    turn.debug["stop_reason"] = _preview(exc.shape, 500)
                     logger.error("No usable model reply after bounded recovery, turn=%s", turn.id)
                 except asyncio.CancelledError:
                     if turn.reason != "task" or not turn.cancelled:
                         raise
-                except Exception:
+                except Exception as exc:
+                    error_type = type(exc).__name__
                     logger.exception("Turn failed: %s", turn.id)
                 finally:
                     if turn.completion is not None and not turn.completion.done():
@@ -140,11 +161,75 @@ class Engine:
                             "failed_verification": failed_verification,
                         },
                     )
+                    turn.debug.update(
+                        duration_ms=(perf_counter() - started) * 1000,
+                        outcome="deferred"
+                        if deferred
+                        else "timed_out"
+                        if timed_out
+                        else "failed_generation"
+                        if failed_generation
+                        else "error"
+                        if error_type
+                        else "cancelled"
+                        if turn.cancelled
+                        else "failed_verification"
+                        if failed_verification
+                        else "completed"
+                        if successful
+                        else "stopped",
+                        error_type=error_type,
+                        sent=list(turn.sent),
+                        aux_sent=[dict(x) for x in turn.aux_sent],
+                        delivery_uncertain=turn.delivery_uncertain,
+                    )
+                    self.last_debug[turn.event.guild_id] = turn
+                    self.write_conversation_log(turn)
                     self.active.pop(key, None)
                     queue.task_done()
         finally:
             # No await between observing queue empty and removing this worker.
             self.workers.pop(key, None)
+
+    def write_conversation_log(self, turn):
+        """One JSONL line per turn, the 4.6 counterpart of 4.0 conversation.jsonl."""
+        record = turn.debug
+        event = turn.event
+        channel = getattr(turn.source, "channel", None)
+        rounds = record.get("rounds", [])
+        jsonl_log.write(
+            "conversation",
+            {
+                "log_type": "conversation",
+                "time": jsonl_log.local(record.get("started_at", event.created_at)),
+                "turn_id": turn.id,
+                "mode": "proactive" if turn.reason == "proactive" else "triggered",
+                "reason": turn.reason,
+                "attention_reason": list(turn.reason_facts),
+                "guild_id": str(event.guild_id),
+                "channel_id": str(event.channel_id),
+                "channel_name": getattr(channel, "name", ""),
+                "user_id": str(event.author_id),
+                "user_name": event.author_name,
+                "message_id": str(event.id),
+                "user_message": event.text,
+                "attachments": list(event.attachments),
+                "participation": record.get("participation"),
+                "responded": bool(record.get("sent") or record.get("aux_sent")),
+                "replied_to_message": any(r.get("reply_to") for r in rounds),
+                "no_need": any(r.get("silence") for r in rounds),
+                "bot_response": "\n".join(record.get("sent", [])),
+                "aux_sent": record.get("aux_sent", []),
+                "tool_rounds": sum(1 for r in rounds if r.get("tools")),
+                "tools": [t["tool"] for r in rounds for t in r.get("tools", [])],
+                "rounds": rounds,
+                "outcome": record.get("outcome"),
+                "stop_reason": record.get("stop_reason"),
+                "error_type": record.get("error_type"),
+                "delivery_uncertain": record.get("delivery_uncertain", False),
+                "duration_ms": round(record.get("duration_ms", 0), 2),
+            },
+        )
 
     def cancel_task(self, guild_id, channel_id, user_id, task_id, *, admin=False):
         """Cancel only an explicit task in this channel, owned by this caller."""
@@ -429,6 +514,7 @@ class Engine:
 
             turn.participation = await classify(self.config, self.model, turn)
             self.delivery.db.trace(turn.id, "participation", turn.participation)
+            turn.debug["participation"] = turn.participation
             self.access.channel(turn, turn.event.channel_id)
             if turn.cancelled or not turn.participation["should_reply"]:
                 return
@@ -453,7 +539,13 @@ class Engine:
             if turn.cancelled:
                 return
             messages[0]["content"] = self.compiler.persona_with_tools(turn.loaded_tools)
-            async with turn.source.channel.typing():
+            # Proactive looks may stay silent; only real delivery shows typing.
+            typing = (
+                contextlib.nullcontext()
+                if turn.reason == "proactive"
+                else turn.source.channel.typing()
+            )
+            async with typing:
                 try:
                     result = (
                         await self.generate_terminal_reply(turn, messages, repair, maximum)
@@ -474,6 +566,15 @@ class Engine:
             if turn.cancelled:
                 return
             parts = parse(result.text)
+            debug_round = {
+                "round": round_number + 1,
+                "response": _preview(result.text, 4000),
+                "finish_reason": result.finish_reason,
+                "tools": [],
+            }
+            turn.debug.setdefault("rounds", []).append(debug_round)
+            if any(p.kind == "reply" for p in parts):
+                debug_round["reply_to"] = next(p.text for p in parts if p.kind == "reply")
             if result.finish_reason == "length":
                 # Never execute potentially truncated control data.
                 await self.delivery.send_text(turn, turn.required_response or "剛剛那段回覆沒完成…")
@@ -482,6 +583,7 @@ class Engine:
             errors = [p.text for p in parts if p.kind == "error"]
             calls = [p for p in parts if p.kind == "tool"]
             if errors:
+                debug_round["errors"] = errors
                 if round_number == maximum:
                     await self.delivery.send_text(
                         turn, turn.required_response or "剛剛那段沒處理好，還不能確認結果…"
@@ -491,6 +593,7 @@ class Engine:
                 messages.extend(repair.focus_messages(turn, messages))
                 continue
             silence = any(p.kind == "silence" for p in parts)
+            debug_round["silence"] = silence
             blocked = {p.name for p in calls} & repair.protected_actions
             if blocked or (repair.pending and not calls):
                 # Do not deliver a plausible answer in place of an unexecuted
@@ -555,6 +658,14 @@ class Engine:
                     return
                 report = await self.executor.execute(turn, part.name, part.text)
                 reports.append(report)
+                debug_round["tools"].append(
+                    {
+                        "tool": part.name,
+                        "args": _preview(part.text, 1000),
+                        "status": report["status"],
+                        "detail": _preview(report.get("error") or report.get("result", ""), 2000),
+                    }
+                )
                 repair.observe(report, part)
                 verification.observe(part, report)
                 if verification.required:
