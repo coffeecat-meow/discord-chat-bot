@@ -79,7 +79,7 @@ class Tool:
         for key, value in arguments.items():
             if key in {"user_id", "channel_id", "sticker_id", "memory_id"} and (
                 not value.isdigit() or int(value) <= 0
-            ):
+            ) and not (self.name == "SEND_STICKER" and key == "sticker_id"):  # name lookup allowed
                 if key == "user_id" and self.name in {"MEM_UPDATE", "MEM_OBSERVE"}:
                     raise ValueError("user_id 必須是已確認的數字帳號 ID。" + MEMORY_IDENTITY_POLICY)
                 raise ValueError(f"{key} must be a numeric Discord ID")
@@ -209,7 +209,7 @@ TOOLS = [
     Tool(
         "SEND_STICKER",
         ("sticker_id",),
-        "發送本群可用貼圖，先用GUILD_ASSET_SEARCH取得ID；獨立發一則，成功前不要說已發送",
+        "發送本群可用貼圖，填ID或貼圖名稱（可先用GUILD_ASSET_SEARCH查）；表情符號不是貼圖，不用此工具；獨立發一則，成功前不要說已發送",
         "social",
         True,
     ),
@@ -233,7 +233,7 @@ TOOLS = [
     Tool(
         "GUILD_ASSET_SEARCH",
         ("query", "types", "limit"),
-        "尋找本群表情、貼圖和本Bot指令，按名稱或ID查找已註冊子指令；query可空；types可空或emoji,sticker,command；最多30筆，不代表其他Bot指令",
+        "尋找本群表情、貼圖和本Bot指令，按名稱或ID查找已註冊子指令；query可空；types可空或emoji,sticker,command；最多30筆，不代表其他Bot指令。表情符號直接把結果的text（<:名稱:ID>）寫進回覆就會顯示，貼圖才用SEND_STICKER",
         "discord",
         optional=("query", "types"),
         defaults=(("types", ""), ("limit", "30")),
@@ -283,7 +283,7 @@ TOOLS = [
         optional=("context", "value"),
     ),
     Tool("LOOKUP_MEMORY", ("user_id",), "依人物帳號ID查記憶", "memory"),
-    Tool("REACT", ("emoji",), "對目前訊息加表情反應", "social", True, True),
+    Tool("REACT", ("emoji",), "對目前訊息加表情反應，emoji填Unicode表情、本群表情名稱或<:名稱:ID>", "social", True, True),
     Tool("PING", ("user_id",), "在文字中明確提及；平常直接稱呼", "presentation", common=True),
     Tool(
         "REPLY_TO",

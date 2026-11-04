@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import discord
 
 
@@ -105,13 +106,22 @@ async def read_channel(executor, turn, args):
     return page
 
 
+def _loose(text):
+    """Ignore separators so "mike watch" finds "mike_watching"."""
+    return re.sub(r"[\s_\-]+", "", text)
+
+
 def _rank(query, row):
     name = row["name"].casefold()
-    if not query or query == row.get("id") or query == name:
+    if not query or query == row.get("id") or query == name or _loose(query) == _loose(name):
         return 0
-    if name.startswith(query):
+    if name.startswith(query) or _loose(name).startswith(_loose(query)):
         return 1
-    if query in name or query in row.get("topic", "").casefold():
+    if (
+        query in name
+        or _loose(query) in _loose(name)
+        or query in row.get("topic", "").casefold()
+    ):
         return 2
     return 3
 

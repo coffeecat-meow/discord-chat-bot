@@ -18,6 +18,35 @@ def event_times(config, arguments):
     return start, end
 
 
+def reaction_emoji(bot, turn, value):
+    """Accept <:name:id>, a bare ID, :name: or name for custom emoji; Unicode as is.
+
+    Discord rejects a bare custom-emoji ID (10014 Unknown Emoji), so resolve it
+    before the action receipt is claimed.
+    """
+    text = value.strip()
+    custom = re.fullmatch(r"<a?:(\w+):(\d+)>", text)
+    identifier = int(custom[2]) if custom else int(text) if text.isdigit() else None
+    name = None if identifier else re.fullmatch(r":?([\w~-]+):?", text, flags=re.ASCII)
+    if identifier is None and name is None:
+        return text  # Unicode emoji
+    guild = bot.get_guild(turn.event.guild_id)
+    loose = lambda s: re.sub(r"[\s_\-]+", "", s).casefold()
+    found = next(
+        (
+            e
+            for e in (guild.emojis if guild else ())
+            if (e.id == identifier if identifier else loose(e.name) == loose(name[1]))
+        ),
+        None,
+    )
+    if found is None and identifier:
+        found = bot.get_emoji(identifier)  # emoji from another server the bot is in
+    if found is None or not getattr(found, "available", True):
+        raise ValueError(f"找不到可用的表情「{text}」；先用GUILD_ASSET_SEARCH查本群表情")
+    return f"{found.name}:{found.id}"
+
+
 def prepare(executor, turn, name, arguments):
     """Synchronous, side-effect-free checks before claiming an action receipt."""
     if name == "SERVER_EVENT":
@@ -33,6 +62,8 @@ def prepare(executor, turn, name, arguments):
         from .protocol import auxiliary_parts
 
         auxiliary_parts(arguments["content"])
+    if name == "REACT":
+        arguments["emoji"] = reaction_emoji(executor.bot, turn, arguments["emoji"])
     if name == "SEND_CHANNEL_MESSAGE":
         # Destination scope is known before anything is sent; rejecting here
         # keeps a denied channel a clean non-write instead of an unknown receipt.

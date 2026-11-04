@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 def _short(value, limit=300):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    # One log record per line, even for multi-line results such as VIEW_IMAGE.
+    text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit] + "…"
 
 
@@ -83,6 +85,22 @@ class ToolExecutor:
                 ):
                     self.db.settle(key, "failed", type(exc).__name__)
                     return {"status": "rejected", "tool": name, "error": str(exc)}
+                import discord
+
+                if (
+                    tool.action
+                    and isinstance(exc, discord.HTTPException)
+                    and 400 <= exc.status < 500
+                    and exc.status != 429
+                ):
+                    # Discord refused the request outright: nothing was applied,
+                    # so report a clean failure instead of an uncertain action.
+                    self.db.settle(key, "failed", f"HTTP {exc.status}")
+                    return {
+                        "status": "rejected",
+                        "tool": name,
+                        "error": f"Discord拒絕（{exc.status}，代碼{exc.code}）：{exc.text or exc}",
+                    }
                 if tool.action:
                     self.db.settle(key, "unknown", type(exc).__name__)
                 if isinstance(exc, Exception) and not isinstance(

@@ -1,5 +1,7 @@
 """Sticker metadata carried in the existing typed media list (no schema change)."""
 
+import re
+
 
 def records(message):
     return tuple(
@@ -15,9 +17,32 @@ def records(message):
     )
 
 
+def _loose(text):
+    return re.sub(r"[\s_\-:]+", "", str(text)).casefold()
+
+
 def guild_sticker(bot, turn, identifier):
+    """Find a current-guild sticker by numeric ID or by name."""
     guild = bot.get_guild(turn.event.guild_id)
-    found = next((s for s in guild.stickers if s.id == int(identifier)), None) if guild else None
+    text = str(identifier).strip()
+    stickers = guild.stickers if guild else ()
+    if text.isdigit():
+        found = next((s for s in stickers if s.id == int(text)), None)
+    else:
+        found = next((s for s in stickers if _loose(s.name) == _loose(text)), None)
     if found is None or not getattr(found, "available", True):
+        emoji = next(
+            (
+                e
+                for e in (guild.emojis if guild else ())
+                if (text.isdigit() and e.id == int(text)) or _loose(e.name) == _loose(text)
+            ),
+            None,
+        )
+        if emoji is not None:
+            raise ValueError(
+                f"「{emoji.name}」是表情符號不是貼圖，不能用SEND_STICKER；"
+                f"直接把 {emoji} 寫進回覆文字就會顯示"
+            )
         raise ValueError("Sticker is not an available sticker of the current guild")
     return found
