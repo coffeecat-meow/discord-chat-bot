@@ -29,7 +29,9 @@ def validate_url(url):
         or p.username is not None
         or p.password is not None
         or p.port not in {None, 443}
-        or not p.path.startswith(("/attachments/", "/ephemeral-attachments/", "/stickers/"))
+        or not p.path.startswith(
+            ("/attachments/", "/ephemeral-attachments/", "/stickers/", "/emojis/")
+        )
     ):
         raise ValueError("Media must come from a known Discord CDN source")
     return url

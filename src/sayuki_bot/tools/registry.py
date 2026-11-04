@@ -79,7 +79,9 @@ class Tool:
         for key, value in arguments.items():
             if key in {"user_id", "channel_id", "sticker_id", "memory_id"} and (
                 not value.isdigit() or int(value) <= 0
-            ) and not (self.name == "SEND_STICKER" and key == "sticker_id"):  # name lookup allowed
+            ) and not (
+                self.name in {"SEND_STICKER", "VIEW_STICKER"} and key == "sticker_id"
+            ):  # current-guild name lookup allowed
                 if key == "user_id" and self.name in {"MEM_UPDATE", "MEM_OBSERVE"}:
                     raise ValueError("user_id 必須是已確認的數字帳號 ID。" + MEMORY_IDENTITY_POLICY)
                 raise ValueError(f"{key} must be a numeric Discord ID")
@@ -201,10 +203,18 @@ TOOLS = [
     Tool(
         "VIEW_STICKER",
         ("sticker_id", "source_message_id"),
-        "查看本群或可讀訊息的貼圖，來源在歷史外時填完整msg_ID（先READ_MESSAGE查原文）；動態貼圖只看有限取樣，Lottie只看預覽。缺圖不猜內容",
+        "查看本群或可讀訊息的貼圖，本群貼圖可填名稱；來源在歷史外時填ID與完整msg_ID（先READ_MESSAGE查原文）；動態貼圖只看有限取樣，Lottie只看預覽。缺圖不猜內容",
         "discord",
+        common=True,
         optional=("source_message_id",),
         defaults=(("source_message_id", ""),),
+    ),
+    Tool(
+        "VIEW_EMOJI",
+        ("emoji",),
+        "查看表情符號的圖，填本群表情名稱、ID或<:名稱:ID>；其他伺服器的表情需出現在看得到的訊息裡；動態表情只看有限取樣。缺圖不猜內容",
+        "discord",
+        common=True,
     ),
     Tool(
         "SEND_STICKER",

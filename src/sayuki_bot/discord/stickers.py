@@ -41,8 +41,8 @@ def guild_sticker(bot, turn, identifier):
         )
         if emoji is not None:
             raise ValueError(
-                f"「{emoji.name}」是表情符號不是貼圖，不能用SEND_STICKER；"
-                f"直接把 {emoji} 寫進回覆文字就會顯示"
+                f"「{emoji.name}」是表情符號不是貼圖；要顯示就把 {emoji} 寫進回覆文字，"
+                "要看圖用VIEW_EMOJI"
             )
         raise ValueError("Sticker is not an available sticker of the current guild")
     return found

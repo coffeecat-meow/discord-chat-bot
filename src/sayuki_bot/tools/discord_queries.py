@@ -139,6 +139,10 @@ async def run(executor, turn, name, a):
         from .stickers import view
 
         return await view(executor, turn, a)
+    if name == "VIEW_EMOJI":
+        from .stickers import view_emoji
+
+        return await view_emoji(executor, turn, a)
     if name == "INSPECT_POLL":
         msg = await executor.message(turn, a["message_id"])
         executor.access.channel(turn, msg.channel.id)
