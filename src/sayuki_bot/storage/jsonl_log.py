@@ -6,6 +6,7 @@ simulators and evaluation runs never write into the deployment directory.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 _directory: Path | None = None
 _zone = ZoneInfo("Asia/Taipei")
 _max_bytes = 50 * 1024 * 1024
+# Hashes already stored in system_prompts.jsonl; each distinct prompt is kept once.
+_known_prompts: set[str] = set()
 
 
 def configure(directory, *, tz="Asia/Taipei", max_mb=50):
@@ -25,6 +28,29 @@ def configure(directory, *, tz="Asia/Taipei", max_mb=50):
     _directory.mkdir(parents=True, exist_ok=True)
     _zone = ZoneInfo(tz)
     _max_bytes = int(max_mb * 1024 * 1024)
+    _known_prompts.clear()
+    for path in (_directory / "system_prompts.jsonl.1", _directory / "system_prompts.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as file:
+                for line in file:
+                    try:
+                        _known_prompts.add(json.loads(line)["sha256"])
+                    except (ValueError, KeyError, TypeError):
+                        continue
+        except FileNotFoundError:
+            continue
+
+
+def _remember_prompt(text):
+    """Store a leading system prompt once; invocation records cite its hash."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if _directory is not None and digest not in _known_prompts:
+        write(
+            "system_prompts",
+            {"time": now(), "sha256": digest, "chars": len(text), "content": text},
+        )
+        _known_prompts.add(digest)
+    return digest
 
 
 def now():
@@ -72,15 +98,23 @@ def content_text(content):
 
 
 def messages_for_log(messages):
-    """The leading system prompt (persona, or memory's fixed instructions) is
-    omitted as in 4.0; later per-turn system instructions are kept for debugging."""
+    """The leading system prompt (persona + tool help, or memory's fixed
+    instructions) is replaced by its sha256; the full text is stored once in
+    system_prompts.jsonl. Later per-turn system instructions are kept inline."""
     sanitized, input_chars, system_chars = [], 0, 0
     for index, message in enumerate(messages):
         role = message.get("role", "")
         text = content_text(message.get("content", ""))
         if role == "system" and index == 0:
             system_chars += len(text)
-            sanitized.append({"role": role, "system_prompt_omitted": True, "chars": len(text)})
+            sanitized.append(
+                {
+                    "role": role,
+                    "system_prompt_omitted": True,
+                    "chars": len(text),
+                    "sha256": _remember_prompt(text),
+                }
+            )
         else:
             input_chars += len(text)
             sanitized.append({"role": role, "content": text, "chars": len(text)})
