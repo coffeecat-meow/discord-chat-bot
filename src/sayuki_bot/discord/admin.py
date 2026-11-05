@@ -298,6 +298,40 @@ def register_admin(bot):
         lines.extend(summary)
         return "\n".join(lines)
 
+    CALL_LABELS = {
+        "chat": "聊天",
+        "task": "任務",
+        "attention": "接話判斷",
+        "vision": "看圖",
+        "memory": "背景記憶",
+    }
+    PHASES = {"final_tool": "最後一輪", "closeout": "收尾"}
+
+    def reasoning_stream(calls, limit=None):
+        """Every model call of the turn in order; limit trims each reasoning."""
+        lines = []
+        for index, call in enumerate(calls, 1):
+            role, _, phase = call.get("call_type", "?").partition(":")
+            label = CALL_LABELS.get(role, role) + (f"（{PHASES.get(phase, phase)}）" if phase else "")
+            tokens = call.get("reasoning_tokens")
+            head = f"#{index} {label} {call.get('time', '')[11:19]}"
+            if call.get("route") == "fallback":
+                head += "［備援］"
+            if "reasoning" not in call:
+                head += "（此紀錄早於思考紀錄功能）"
+            else:
+                head += f"（推理 {tokens} tokens）" if tokens else "（無推理）"
+            if not call.get("success", True):
+                head += f"　失敗：{preview(call.get('error', ''), 80)}"
+            lines.append(head)
+            reasoning = call.get("reasoning") or ""
+            if reasoning:
+                body = preview(reasoning, limit) if limit else reasoning.strip()
+                lines.extend("  " + line for line in body.splitlines())
+            elif tokens:
+                lines.append("  （服務商沒有回傳推理內容）")
+        return lines
+
     def preview(text, limit):
         text = (text or "").strip()
         return text if len(text) <= limit else text[:limit] + "…"
@@ -327,16 +361,37 @@ def register_admin(bot):
                 *summary,
             ]
             text = "\n".join(line for line in lines if line)
-        if len(text) <= 1900:
-            await interaction.response.send_message(f"```text\n{text}\n```", ephemeral=True)
-        else:
-            import io
+        import asyncio
+        import io
+        from sayuki_bot.storage import jsonl_log
 
-            await interaction.response.send_message(
-                "內容較長，完整內容在附件",
-                file=discord.File(io.BytesIO(text.encode()), filename="sayuki-debug.txt"),
-                ephemeral=True,
+        turn_id = turn.debug.get("turn_id", turn.id) if turn is not None else ids[0]
+        calls = await asyncio.to_thread(jsonl_log.find, "invocation", turn_id)
+        full = text
+        shown = text
+        if calls:
+            title = f"思考流（共{len(calls)}次模型呼叫）"
+            full = text + f"\n\n{title}：\n" + "\n".join(reasoning_stream(calls))
+            short = (
+                text
+                + f"\n\n{title}，完整內容見附件：\n"
+                + "\n".join(reasoning_stream(calls, 120))
             )
+            shown = short if len(short) <= 1900 else text + f"\n\n{title}：見附件"
+        attach = full != shown or len(shown) > 1900
+        if len(shown) > 1900:
+            shown = "內容較長，完整內容在附件"
+        else:
+            shown = f"```text\n{shown}\n```"
+        await interaction.response.send_message(
+            shown,
+            **(
+                {"file": discord.File(io.BytesIO(full.encode()), filename="sayuki-debug.txt")}
+                if attach
+                else {}
+            ),
+            ephemeral=True,
+        )
 
     @group.command(name="logs", description="檢視近期模型用量與錯誤，不包含角色卡")
     async def logs(interaction: discord.Interaction):

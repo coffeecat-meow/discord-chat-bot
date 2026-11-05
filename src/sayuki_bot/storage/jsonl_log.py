@@ -79,6 +79,29 @@ def write(name, record):
         logger.error("寫入%s紀錄失敗: %s", name, exc)
 
 
+def find(name, turn_id):
+    """Records of one turn, oldest first (rotated file included). Blocking I/O:
+    call through asyncio.to_thread from the event loop."""
+    if _directory is None or not turn_id:
+        return []
+    found = []
+    for path in (_directory / f"{name}.jsonl.1", _directory / f"{name}.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as file:
+                for line in file:
+                    if turn_id not in line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if record.get("turn_id") == turn_id:
+                        found.append(record)
+        except FileNotFoundError:
+            continue
+    return found
+
+
 def content_text(content):
     if isinstance(content, str):
         return content
