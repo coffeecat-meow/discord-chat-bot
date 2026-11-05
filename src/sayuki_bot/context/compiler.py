@@ -234,6 +234,9 @@ class ContextCompiler:
             "不需要每次查記憶，也不必把知道的往事說出來。"
             + SELF_POLICY
         )
+        sleeping_note = self.config.sleep.describe(event.created_at)
+        if sleeping_note:
+            instructions += sleeping_note
         if turn.reason == "proactive":
             instructions += "這則訊息未命中直接叫你的條件；不適合加入就使用[[$NO_NEED_TO_ANSWER$]]，也可只反應。"
         if profiles:

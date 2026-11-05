@@ -45,6 +45,8 @@ class SayukiBot(commands.Bot):
             config.path("database"),
             diagnostic_retention_days=config.get("storage", "diagnostic_retention_days", 30),
         )
+        # Sayuki's own naps / one-night wake adjustments survive restarts.
+        config.sleep.state.load(self.db.get_state("sleep"))
         self.memory = MemoryService(self.db)
         self.model = ModelClient(config, self.db, api_key)
         self.access = Access(self, config)
@@ -272,13 +274,15 @@ class SayukiBot(commands.Bot):
             try:
                 now = datetime.now(timezone.utc)
                 asleep = self.config.sleep.sleeping(now)
+                # Nap and daily sleep show different texts; refresh on either change.
+                label = self.config.sleep.status_text(now) if asleep else None
                 expired = self.sayuki_status_until and self.sayuki_status_until <= now
-                if asleep != previous_sleep or expired:
+                if (asleep, label) != previous_sleep or expired:
                     await self.change_presence(
                         status=discord.Status.idle if asleep else discord.Status.online,
-                        activity=discord.Game(self.config.sleep.status) if asleep else None,
+                        activity=discord.Game(label) if asleep else None,
                     )
-                    previous_sleep = asleep
+                    previous_sleep = (asleep, label)
                     self.sayuki_status_until = None
                 self.reminders.tick(now, asleep)
             except asyncio.CancelledError:

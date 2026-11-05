@@ -143,6 +143,8 @@ class Database:
             memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
             category TEXT NOT NULL CHECK(category IN ('preference','conversation')),
             evidence_ids TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS runtime_state (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS import_erasure (
             guild_id TEXT NOT NULL, user_id TEXT NOT NULL, cleared_at TEXT NOT NULL,
             restore_allowed INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +163,20 @@ class Database:
 
     def close(self):
         self.connection.close()
+
+    def get_state(self, key):
+        row = self.connection.execute(
+            "SELECT value FROM runtime_state WHERE key=?", (key,)
+        ).fetchone()
+        return json.loads(row["value"]) if row else None
+
+    def set_state(self, key, value):
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO runtime_state(key,value,updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                (key, json.dumps(value, ensure_ascii=False), utcnow()),
+            )
 
     def record_event(self, event):
         if not self.memory_enabled(event.guild_id, event.author_id):

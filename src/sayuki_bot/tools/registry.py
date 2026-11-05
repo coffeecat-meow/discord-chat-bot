@@ -293,6 +293,16 @@ TOOLS = [
         optional=("context", "value"),
     ),
     Tool("LOOKUP_MEMORY", ("user_id",), "依人物帳號ID查記憶", "memory"),
+    Tool(
+        "SLEEP",
+        ("until", "wake_time", "status"),
+        "自己去小睡（最長3小時）：until填醒來時間HH:MM或分鐘數，status是睡覺時的Discord狀態文字可空。會接上日常睡眠時系統會提醒，可改早點醒，或用wake_time調整今晚起床時間（只限今晚，最晚12:00）；只填wake_time則只調整今晚起床時間。睡著時被@仍會醒來回話",
+        "social",
+        True,
+        True,
+        optional=("until", "wake_time", "status"),
+        defaults=(("wake_time", ""), ("status", "")),
+    ),
     Tool("REACT", ("emoji",), "對目前訊息加表情反應，emoji填Unicode表情、本群表情名稱或<:名稱:ID>", "social", True, True),
     Tool("PING", ("user_id",), "在文字中明確提及；平常直接稱呼", "presentation", common=True),
     Tool(

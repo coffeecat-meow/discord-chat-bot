@@ -18,6 +18,91 @@ def event_times(config, arguments):
     return start, end
 
 
+NAP_LIMIT = timedelta(hours=3)
+WAKE_LATEST = "12:00"
+
+
+def _clock(text):
+    match = re.fullmatch(r"(\d{1,2})[:：](\d{2})", text)
+    if not match or int(match[1]) > 23 or int(match[2]) > 59:
+        return None
+    from datetime import time
+
+    return time(int(match[1]), int(match[2]))
+
+
+def sleep_plan(policy, now, until_text, wake_text, status):
+    """Validate a SLEEP request against the daily schedule; pure, no side effects.
+
+    Returns {"apply": {...}, "message": str} or {"status": "ignored", "reason": str}
+    (a nap running into daily sleep needs her choice). Raises ValueError.
+    """
+    from datetime import datetime as _dt, time
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(policy.timezone)
+    local = now.astimezone(zone).replace(tzinfo=None)
+    end_date, win_start, win_end = policy.next_window(now)
+    in_daily = policy.daily_sleeping(now)
+    until = None
+    if until_text:
+        if in_daily:
+            raise ValueError("現在已經是日常睡眠時間；只能用wake_time調整這次的起床時間")
+        minutes = re.fullmatch(r"(\d{1,3})\s*(?:分鐘|分|min|m)?", until_text)
+        clock = _clock(until_text)
+        if minutes:
+            until = local + timedelta(minutes=int(minutes[1]))
+        elif clock:
+            until = _dt.combine(local.date(), clock)
+            if until <= local:
+                until += timedelta(days=1)
+        else:
+            raise ValueError("until要填醒來時間HH:MM或分鐘數")
+        if until <= local:
+            raise ValueError("醒來時間要在現在之後")
+        if until - local > NAP_LIMIT:
+            raise ValueError(f"小睡最長3小時，最晚只能睡到{local + NAP_LIMIT:%H:%M}")
+    wake = None
+    if wake_text:
+        wake = _clock(wake_text)
+        wake_at = _dt.combine(end_date, wake) if wake else None
+        if (
+            wake is None
+            or wake_at <= win_start
+            or wake_at <= local
+            or wake > time.fromisoformat(WAKE_LATEST)
+        ):
+            raise ValueError(
+                f"wake_time要填HH:MM，在{win_start:%H:%M}睡著之後、{WAKE_LATEST}之前，且晚於現在"
+            )
+    if until is None and wake is None:
+        raise ValueError("至少要填until（小睡醒來時間）或wake_time（今晚起床時間）")
+    if until is not None and until > win_start and wake is None:
+        return {
+            "status": "ignored",
+            "reason": (
+                f"還沒去睡：小睡到{until:%H:%M}會接上日常睡眠（{win_start:%H:%M}開始），"
+                f"照原本作息會一路睡到{win_end:%H:%M}才醒。可以選擇："
+                f"1) 把醒來時間改到{win_start:%H:%M}之前；"
+                f"2) 照睡，並用wake_time調整今晚的起床時間（只限今晚，最晚{WAKE_LATEST}），"
+                f"例如[[SLEEP: {until_text} | {until:%H:%M}]]就是{until:%H:%M}起床。"
+            ),
+        }
+    nap_until = min(until, win_start) if until is not None else None
+    apply = {"wake_override": (end_date, wake) if wake else None}
+    if nap_until is not None:
+        apply["nap_until"] = nap_until.replace(tzinfo=zone).astimezone(timezone.utc)
+        apply["nap_status"] = status[:128]
+    parts = []
+    if nap_until is not None and until > win_start:
+        parts.append(f"去睡了，小睡接上日常睡眠，{wake:%H:%M}起床")
+    elif nap_until is not None:
+        parts.append(f"去小睡了，預計{nap_until:%H:%M}醒來")
+    if wake and not (nap_until is not None and until > win_start):
+        parts.append(f"{'這次' if in_daily else '今晚'}起床時間改為{wake:%H:%M}（只限這一次）")
+    return {"apply": apply, "message": "；".join(parts)}
+
+
 def reaction_emoji(bot, turn, value):
     """Accept <:name:id>, a bare ID, :name: or name for custom emoji; Unicode as is.
 
@@ -102,6 +187,26 @@ async def run(executor, turn, name, a):
             raise ValueError("Nickname exceeds 32 characters")
         await member.edit(nick=a["nickname"] or None, reason="Sayuki nickname action")
         return "nickname updated"
+    if name == "SLEEP":
+        policy = executor.config.sleep
+        plan = sleep_plan(
+            policy, datetime.now(timezone.utc), a["until"], a["wake_time"], a["status"]
+        )
+        if "apply" not in plan:
+            return plan
+        state = policy.state
+        if "nap_until" in plan["apply"]:
+            state.nap_until = plan["apply"]["nap_until"]
+            state.nap_status = plan["apply"]["nap_status"]
+        if plan["apply"]["wake_override"] or "nap_until" not in plan["apply"]:
+            state.wake_override = plan["apply"]["wake_override"]
+        executor.db.set_state("sleep", state.to_json())
+        now = datetime.now(timezone.utc)
+        if policy.sleeping(now):
+            await executor.bot.change_presence(
+                status=discord.Status.idle, activity=discord.Game(policy.status_text(now))
+            )
+        return plan["message"]
     if name == "STATUS":
         await executor.bot.change_presence(activity=discord.Game(a["text"][:128]))
         executor.bot.sayuki_status_until = datetime.now(timezone.utc) + timedelta(minutes=30)

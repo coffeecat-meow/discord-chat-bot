@@ -22,7 +22,47 @@ def register_admin(bot):
         if not await admin(interaction):
             return
         await interaction.response.send_message(
-            f"{__version__}｜進行中:{len(bot.engine.active)}｜佇列:{sum(q.qsize() for q in bot.engine.queues.values())}｜背景記憶:{bot.config.get('memory', 'background_enabled', False)}",
+            f"{__version__}｜進行中:{len(bot.engine.active)}｜佇列:{sum(q.qsize() for q in bot.engine.queues.values())}｜背景記憶:{bot.config.get('memory', 'background_enabled', False)}｜{sleep_summary()}",
+            ephemeral=True,
+        )
+
+    def sleep_summary():
+        from zoneinfo import ZoneInfo
+
+        policy, now = bot.config.sleep, datetime.now(timezone.utc)
+        zone = ZoneInfo(policy.timezone)
+        _, start, end = policy.next_window(now)
+        parts = []
+        if policy.napping(now):
+            parts.append(f"小睡到{policy.state.nap_until.astimezone(zone):%H:%M}")
+        elif policy.daily_sleeping(now):
+            parts.append("日常睡眠中")
+        else:
+            parts.append("醒著")
+        parts.append(f"下次睡眠{start:%m/%d %H:%M}～{end:%H:%M}")
+        return "睡眠:" + "，".join(parts)
+
+    @group.command(name="wake", description="立刻叫醒紗月，並取消今晚的起床時間調整")
+    async def wake(interaction: discord.Interaction):
+        if not await admin(interaction):
+            return
+        from zoneinfo import ZoneInfo
+
+        policy, now = bot.config.sleep, datetime.now(timezone.utc)
+        state = policy.state
+        was_asleep = policy.sleeping(now)
+        state.nap_until, state.nap_status = None, ""
+        if policy.daily_sleeping(now):
+            # End only this night's daily sleep, at the current minute.
+            end_date, _, _ = policy.next_window(now)
+            local = now.astimezone(ZoneInfo(policy.timezone))
+            state.wake_override = (end_date, local.time().replace(second=0, microsecond=0, tzinfo=None))
+        else:
+            state.wake_override = None
+        bot.db.set_state("sleep", state.to_json())
+        await bot.change_presence(status=discord.Status.online, activity=None)
+        await interaction.response.send_message(
+            "已叫醒紗月" if was_asleep else "她本來就醒著，已清除今晚的起床時間調整",
             ephemeral=True,
         )
 
@@ -133,9 +173,10 @@ def register_admin(bot):
     async def clear_status(interaction: discord.Interaction):
         if not await admin(interaction):
             return
-        asleep = bot.config.sleep.sleeping(datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        asleep = bot.config.sleep.sleeping(now)
         await bot.change_presence(
-            activity=discord.Game(bot.config.sleep.status) if asleep else None,
+            activity=discord.Game(bot.config.sleep.status_text(now)) if asleep else None,
             status=discord.Status.idle if asleep else discord.Status.online,
         )
         bot.sayuki_status_until = None

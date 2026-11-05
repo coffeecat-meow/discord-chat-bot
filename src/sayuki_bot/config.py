@@ -5,13 +5,51 @@ from __future__ import annotations
 import os
 import tomllib
 import math
-from dataclasses import dataclass
-from datetime import datetime, time
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+NAP_STATUS = "小睡中 (＿ ＿)zZ"
+
+
+@dataclass
+class SleepState:
+    """Runtime sleep chosen by Sayuki herself; persisted by the bot in the DB."""
+
+    nap_until: datetime | None = None
+    nap_status: str = ""
+    # One night only: (local date the daily sleep ends on, adjusted wake time).
+    wake_override: tuple[date, time] | None = None
+
+    def to_json(self):
+        return {
+            "nap_until": self.nap_until.isoformat() if self.nap_until else None,
+            "nap_status": self.nap_status,
+            "wake_override": [
+                self.wake_override[0].isoformat(),
+                self.wake_override[1].strftime("%H:%M"),
+            ]
+            if self.wake_override
+            else None,
+        }
+
+    def load(self, data):
+        data = data or {}
+        self.nap_until = (
+            datetime.fromisoformat(data["nap_until"]) if data.get("nap_until") else None
+        )
+        self.nap_status = data.get("nap_status") or ""
+        override = data.get("wake_override")
+        self.wake_override = (
+            (date.fromisoformat(override[0]), time.fromisoformat(override[1]))
+            if override
+            else None
+        )
 
 
 @dataclass(frozen=True)
@@ -21,6 +59,7 @@ class SleepPolicy:
     end: str = "08:00"
     timezone: str = "Asia/Taipei"
     status: str = "悄悄去睡覺了 (＿ ＿)zZ"
+    state: SleepState = field(default_factory=SleepState, compare=False, repr=False)
 
     def __post_init__(self):
         a, b = time.fromisoformat(self.start), time.fromisoformat(self.end)
@@ -32,14 +71,55 @@ class SleepPolicy:
             raise ValueError("sleep.start and sleep.end must differ")
         ZoneInfo(self.timezone)
 
+    def napping(self, now: datetime) -> bool:
+        return self.state.nap_until is not None and now < self.state.nap_until
+
+    def window(self, end_date: date):
+        """Local [start, end) of the daily sleep that ends on end_date."""
+        start, end = time.fromisoformat(self.start), time.fromisoformat(self.end)
+        override = self.state.wake_override
+        if override and override[0] == end_date:
+            end = override[1]
+        start_date = end_date if start < time.fromisoformat(self.end) else end_date - timedelta(days=1)
+        return datetime.combine(start_date, start), datetime.combine(end_date, end)
+
+    def next_window(self, now: datetime):
+        """(end_date, start, end) of the current or next daily sleep, local naive."""
+        local = now.astimezone(ZoneInfo(self.timezone)).replace(tzinfo=None)
+        for offset in range(3):
+            end_date = local.date() + timedelta(days=offset)
+            start, end = self.window(end_date)
+            if end > local:
+                return end_date, start, end
+        raise AssertionError("unreachable")
+
+    def daily_sleeping(self, now: datetime) -> bool:
+        if not self.enabled:
+            return False
+        local = now.astimezone(ZoneInfo(self.timezone)).replace(tzinfo=None)
+        _, start, end = self.next_window(now)
+        return start <= local < end
+
     def sleeping(self, now: datetime) -> bool:
         if now.tzinfo is None:
             raise ValueError("sleep clock must be timezone-aware")
-        if not self.enabled:
-            return False
-        current = now.astimezone(ZoneInfo(self.timezone)).time().replace(tzinfo=None)
-        start, end = time.fromisoformat(self.start), time.fromisoformat(self.end)
-        return start <= current < end if start < end else current >= start or current < end
+        return self.napping(now) or self.daily_sleeping(now)
+
+    def status_text(self, now: datetime) -> str:
+        if self.napping(now) and not self.daily_sleeping(now):
+            return self.state.nap_status or NAP_STATUS
+        return self.status
+
+    def describe(self, now: datetime) -> str:
+        """Prompt note while asleep, so a mention knows how she was woken."""
+        zone = ZoneInfo(self.timezone)
+        if self.daily_sleeping(now):
+            _, _, end = self.next_window(now)
+            return f"你現在在睡覺（日常睡眠，預計{end:%H:%M}起床），是被叫醒來回話的。"
+        if self.napping(now):
+            until = self.state.nap_until.astimezone(zone)
+            return f"你現在在小睡（預計{until:%H:%M}醒來），是被叫醒來回話的。"
+        return ""
 
 
 @dataclass(frozen=True)
