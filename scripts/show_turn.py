@@ -62,6 +62,10 @@ def main():
         for index, message in enumerate(messages):
             print(f"\n--- [{index}] {message['role']} ({len(message['content'])}字) ---")
             print(message["content"])
+        if call.get("reasoning"):
+            print(f"\n--- 推理過程（{call.get('reasoning_tokens') or '?'} tokens）---\n{call['reasoning']}")
+        elif call.get("reasoning_tokens"):
+            print(f"\n--- 推理過程：用了 {call['reasoning_tokens']} tokens，但服務商沒有回傳內容 ---")
         print(f"\n--- 模型輸出 ---\n{call['output']}\n")
 
 

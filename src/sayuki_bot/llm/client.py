@@ -77,6 +77,22 @@ def response_shape(response):
     }
 
 
+def reasoning_text(message):
+    """Provider reasoning, if returned: DeepSeek/opencode use reasoning_content,
+    OpenRouter uses reasoning and/or structured reasoning_details."""
+    for field in ("reasoning_content", "reasoning"):
+        value = getattr(message, field, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    pieces = []
+    for detail in getattr(message, "reasoning_details", None) or []:
+        get = detail.get if isinstance(detail, dict) else lambda k, d=detail: getattr(d, k, None)
+        text = get("text") or get("summary")
+        if isinstance(text, str) and text.strip():
+            pieces.append(text)
+    return "\n".join(pieces)
+
+
 class ModelClient:
     def __init__(self, config, database, api_key, client=None, *, fallback_client=None):
         validate_routes(config)
@@ -323,7 +339,7 @@ class ModelClient:
                 raise
 
     def _log_invocation(self, selected, args, turn_id, role, phase, started_at, start, *,
-                        output="", error=None, usage=None):
+                        output="", error=None, usage=None, reasoning=""):
         messages, input_chars, system_chars = jsonl_log.messages_for_log(args.get("messages", []))
         usage = usage or {}
         jsonl_log.write(
@@ -348,6 +364,11 @@ class ModelClient:
                 "cost": usage.get("cost"),
                 "input_chars_without_system": input_chars,
                 "system_prompt_chars": system_chars,
+                "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get(
+                    "reasoning_tokens"
+                ),
+                "reasoning_chars": len(reasoning or ""),
+                "reasoning": reasoning or "",
                 "output_chars": len(output or ""),
                 "messages": messages,
                 "output": output or "",
@@ -417,6 +438,7 @@ class ModelClient:
         self._log_invocation(
             selected, args, turn_id, role, phase, started_at, start,
             output=content if isinstance(content, str) else "", usage=usage,
+            reasoning=reasoning_text(getattr(choice, "message", None)),
         )
         # Keep length handling in the engine; do not retry an exhausted output
         # allowance or reinterpret a provider refusal/filter as deliberate silence.
