@@ -7,6 +7,8 @@ from typing import Any
 
 import discord
 
+from sayuki_bot.types import User
+
 from .config import TW_TZ
 
 
@@ -150,16 +152,18 @@ class PresenceManager:
             self.records.pop(key, None)
         return len(expired_keys)
 
-    def update_member(self, member) -> None:
-        guild = getattr(member, "guild", None)
-        guild_id = getattr(guild, "id", None)
-        user_id = getattr(member, "id", None)
-        if not guild_id or not user_id:
+    def update_member(self, member: User) -> None:
+        if not isinstance(member, User):
+            raise TypeError("PresenceManager.update_member expects rooms.User")
+        guild_id = member.guild_id
+        user_id = member.id
+
+        if not guild_id:
             return
 
         now = datetime.now(TW_TZ)
         activities = []
-        for activity in getattr(member, "activities", []) or []:
+        for activity in member.activities or []:
             text = _format_activity(activity, now)
             if text:
                 activities.append(text)
@@ -167,8 +171,8 @@ class PresenceManager:
         record = PresenceRecord(
             guild_id=int(guild_id),
             user_id=int(user_id),
-            display_name=getattr(member, "display_name", str(user_id)),
-            status=_status_text(getattr(member, "status", None)),
+            display_name=member.display_name,
+            status=_status_text(member.status),
             activities=activities[:5],
             updated_at=now,
         )
@@ -179,7 +183,7 @@ class PresenceManager:
             for member in getattr(guild, "members", []) or []:
                 if getattr(member, "bot", False):
                     continue
-                self.update_member(member)
+                self.update_member(User.from_discord(member))
 
     def get_record(self, guild_id: int | str | None, user_id: int | str | None) -> PresenceRecord | None:
         if guild_id is None or user_id is None:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from .config import TW_TZ
+from .types import RoomRegistry
 
 
 @dataclass
@@ -26,7 +26,7 @@ class BotStats:
 @dataclass
 class BotState:
     stats: BotStats = field(default_factory=BotStats)
-    channel_message_cache: dict[str, deque] = field(default_factory=dict)
+    room_registry: RoomRegistry = field(default_factory=RoomRegistry)
     vl_description_cache: dict[int, str] = field(default_factory=dict)
     vl_description_cache_times: dict[int, datetime] = field(default_factory=dict)
     discord_component_context_cache: dict[int, str] = field(default_factory=dict)

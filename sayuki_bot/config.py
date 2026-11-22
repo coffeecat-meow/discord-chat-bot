@@ -14,12 +14,21 @@ TW_TZ = timezone(timedelta(hours=8))
 
 
 @dataclass(frozen=True)
+class ModelSettings:
+    name: str
+    api_key: str | None
+    url: str
+
+
+@dataclass(frozen=True)
 class Settings:
     token: str | None
-    openrouter_api_key: str | None
-    openrouter_model: str
-    openrouter_small_model: str
-    openrouter_vl_model: str
+    model: ModelSettings
+    small_model: ModelSettings
+    vl_model: ModelSettings
+    asr_model: ModelSettings | None
+    asr_provider: str
+    asr_language: str | None
     openrouter_use_reasoning_effort: bool
     openrouter_reasoning_effort: str
     temp_dir: str
@@ -51,6 +60,12 @@ class Settings:
     invocation_log_file: Path
     tool_stats_file: Path
     reminders_file: Path
+    voice_recordings_dir: Path
+    voice_bridge_enabled: bool
+    voice_bridge_url: str
+    voice_bridge_port: int
+    voice_bridge_pcm_host: str
+    voice_bridge_pcm_port: int
     command_sync_guild_ids: frozenset[int]
     admin_user_ids: frozenset[int]
     developer_user_ids: frozenset[int]
@@ -114,18 +129,54 @@ def _env_id_set(name: str) -> frozenset[int]:
 def load_settings() -> Settings:
     load_dotenv()
 
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+    model_name = os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free").strip()
+    small_model_name = os.getenv("OPENROUTER_SMALL_MODEL", model_name).strip()
+    vl_model_name = os.getenv(
+        "OPENROUTER_VL_MODEL",
+        "nvidia/nemotron-nano-12b-v2-vl:free",
+    ).strip()
+    asr_model_name = os.getenv("ASR_MODEL", "").strip()
+    asr_model = None
+    if asr_model_name:
+        asr_provider = os.getenv("ASR_PROVIDER", "nvidia").strip().lower()
+        provider_default_urls = {
+            "nvidia": "https://integrate.api.nvidia.com/v1",
+            "openai": "https://api.openai.com/v1",
+            "elevenlabs": "https://api.elevenlabs.io",
+        }
+        asr_model = ModelSettings(
+            name=asr_model_name,
+            api_key=os.getenv("ASR_API_KEY") or api_key,
+            url=os.getenv(
+                "ASR_BASE_URL",
+                provider_default_urls.get(asr_provider, "https://integrate.api.nvidia.com/v1"),
+            ).strip(),
+        )
+    asr_provider = os.getenv("ASR_PROVIDER", "nvidia").strip().lower()
+    asr_language = os.getenv("ASR_LANGUAGE", "").strip() or None
+
     return Settings(
         token=os.getenv("BOT_TOKEN"),
-        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
-        openrouter_model=os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free"),
-        openrouter_small_model=os.getenv(
-            "OPENROUTER_SMALL_MODEL",
-            os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free"),
+        model=ModelSettings(
+            name=model_name,
+            api_key=api_key,
+            url=base_url,
         ),
-        openrouter_vl_model=os.getenv(
-            "OPENROUTER_VL_MODEL",
-            "nvidia/nemotron-nano-12b-v2-vl:free",
+        small_model=ModelSettings(
+            name=small_model_name,
+            api_key=api_key,
+            url=base_url,
         ),
+        vl_model=ModelSettings(
+            name=vl_model_name,
+            api_key=api_key,
+            url=base_url,
+        ),
+        asr_model=asr_model,
+        asr_provider=asr_provider,
+        asr_language=asr_language,
         openrouter_use_reasoning_effort=_env_bool("OPENROUTER_USE_REASONING_EFFORT", False),
         openrouter_reasoning_effort=os.getenv("OPENROUTER_REASONING_EFFORT", "medium").strip(),
         temp_dir=os.getenv("TEMP_DIR", "./temp"),
@@ -160,6 +211,18 @@ def load_settings() -> Settings:
         invocation_log_file=_env_path("INVOCATION_LOG_FILE", BASE_DIR / "logs" / "invocation.jsonl"),
         tool_stats_file=_env_path("TOOL_STATS_FILE", BASE_DIR / "tool_stats.json"),
         reminders_file=_env_path("REMINDERS_FILE", BASE_DIR / "reminders.json"),
+        voice_recordings_dir=_env_path(
+            "VOICE_RECORDINGS_DIR",
+            BASE_DIR / "logs" / "voice",
+        ),
+        voice_bridge_enabled=_env_bool("VOICE_BRIDGE_ENABLED", True),
+        voice_bridge_url=os.getenv(
+            "VOICE_BRIDGE_URL",
+            "http://127.0.0.1:8787",
+        ).strip(),
+        voice_bridge_port=_env_int("VOICE_BRIDGE_PORT", 8787),
+        voice_bridge_pcm_host=os.getenv("VOICE_BRIDGE_PCM_HOST", "127.0.0.1").strip(),
+        voice_bridge_pcm_port=_env_int("VOICE_BRIDGE_PCM_PORT", 8788),
         command_sync_guild_ids=_env_id_set("COMMAND_SYNC_GUILD_IDS"),
         admin_user_ids=_env_id_set("ADMIN_USER_IDS"),
         developer_user_ids=_env_id_set("DEVELOPER_USER_IDS"),

@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
-import discord
-
 from .config import TW_TZ
+from .types import Message
 
 
 def _now() -> datetime:
@@ -41,7 +40,7 @@ def _trim(text: str, limit: int) -> str:
     return text[:limit] + "\n...（內容過長，已截斷）"
 
 
-def _message_attachment_summary(message: discord.Message) -> str:
+def _message_attachment_summary(message: Message) -> str:
     parts = []
     images = sum(1 for item in message.attachments if item.content_type and item.content_type.startswith("image/"))
     videos = sum(1 for item in message.attachments if item.content_type and item.content_type.startswith("video/"))
@@ -194,7 +193,9 @@ class ShortTermMemoryManager:
             async with aiofiles.open(self.pending_file, "a", encoding="utf-8") as file:
                 await file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
 
-    async def record_channel_message(self, message: discord.Message, bot_user_id: int) -> None:
+    async def record_channel_message(self, message: Message, bot_user_id: int) -> None:
+        if not isinstance(message, Message):
+            raise TypeError("record_channel_message expects rooms.Message")
         content = message.clean_content.strip()
         attachments = _message_attachment_summary(message)
         if not content and not attachments:
@@ -206,9 +207,9 @@ class ShortTermMemoryManager:
             "kind": "channel_message",
             "time": message.created_at.astimezone(TW_TZ).isoformat(timespec="seconds"),
             "recorded_at": _now_iso(),
-            "guild_id": str(getattr(getattr(message, "guild", None), "id", "")),
+            "guild_id": str(message.guild.id if message.guild else ""),
             "channel_id": str(message.channel.id),
-            "channel_name": getattr(message.channel, "name", str(message.channel.id)),
+            "channel_name": message.channel.name,
             "message_id": str(message.id),
             "user_id": str(message.author.id),
             "user_name": message.author.display_name,

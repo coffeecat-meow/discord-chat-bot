@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import Any
 
 import aiofiles
-import discord
-
 from .config import TW_TZ
+from .types import Message
 
 
 def _now_text() -> str:
@@ -61,13 +60,12 @@ class UserStatsManager:
             entry["name"] = name
         return entry
 
-    def _channel_info(self, message_or_interaction) -> tuple[str, str]:
-        channel = getattr(message_or_interaction, "channel", None)
-        if not channel:
-            return "", ""
-        return str(getattr(channel, "id", "")), getattr(channel, "name", str(getattr(channel, "id", "")))
+    def _channel_info(self, message: Message) -> tuple[str, str]:
+        return str(message.channel.id), message.channel.name
 
-    async def record_seen_message(self, message: discord.Message) -> None:
+    async def record_seen_message(self, message: Message) -> None:
+        if not isinstance(message, Message):
+            raise TypeError("record_seen_message expects rooms.Message")
         if message.author.bot:
             return
 

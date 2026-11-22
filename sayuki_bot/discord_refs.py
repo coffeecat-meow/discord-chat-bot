@@ -8,6 +8,7 @@ import discord
 
 from .config import TW_TZ
 from .message_context import build_discord_component_context
+from .types import Message
 
 
 CHANNEL_MENTION_RE = re.compile(r"<#(\d+)>")
@@ -19,7 +20,7 @@ MESSAGE_LINK_RE = re.compile(
 @dataclass
 class DiscordReferenceInfo:
     context: str = ""
-    reply_targets: dict[str, discord.Message] = field(default_factory=dict)
+    reply_targets: dict[str, Message] = field(default_factory=dict)
     image_targets: dict[str, list[str]] = field(default_factory=dict)
     image_target_message_ids: dict[str, int] = field(default_factory=dict)
 
@@ -28,7 +29,7 @@ def _message_key(message_id: int) -> str:
     return f"msg_{str(message_id)[-4:]}"
 
 
-def _attachment_summary(message: discord.Message) -> str:
+def _attachment_summary(message: Message) -> str:
     images = sum(1 for item in message.attachments if item.content_type and item.content_type.startswith("image/"))
     videos = sum(1 for item in message.attachments if item.content_type and item.content_type.startswith("video/"))
     audios = sum(1 for item in message.attachments if item.content_type and item.content_type.startswith("audio/"))
@@ -47,7 +48,7 @@ def _attachment_summary(message: discord.Message) -> str:
     return "、".join(parts) if parts else "無附件"
 
 
-def _collect_image_targets(message: discord.Message, info: DiscordReferenceInfo) -> None:
+def _collect_image_targets(message: Message, info: DiscordReferenceInfo) -> None:
     urls = [
         attachment.url
         for attachment in message.attachments
@@ -95,7 +96,7 @@ def _format_channel(channel_id: int, channel) -> str:
 async def _format_message_link(
     url: str,
     channel,
-    message: discord.Message,
+    message: Message,
     component_context_cache: dict[int, str] | None = None,
     component_context_cache_times: dict[int, datetime] | None = None,
     component_cache_ttl_seconds: int = 30,
@@ -141,7 +142,7 @@ async def _format_message_link(
 
 async def resolve_discord_references(
     bot: discord.Client,
-    source_message: discord.Message,
+    source_message: Message,
     text: str,
     *,
     component_context_cache: dict[int, str] | None = None,
@@ -151,11 +152,13 @@ async def resolve_discord_references(
     max_message_links: int = 5,
     max_channel_mentions: int = 8,
 ) -> DiscordReferenceInfo:
+    if not isinstance(source_message, Message):
+        raise TypeError("resolve_discord_references expects rooms.Message")
     info = DiscordReferenceInfo()
     if not text:
         return info
 
-    guild = getattr(source_message, "guild", None)
+    guild = source_message.guild
     lines: list[str] = []
 
     channel_ids = []
@@ -199,11 +202,15 @@ async def resolve_discord_references(
                 continue
 
             try:
-                linked_message = await channel.fetch_message(message_id)
+                linked_message_raw = await channel.fetch_message(message_id)
             except Exception as exc:
                 lines.append(f"- {url}：Discord訊息連結，但讀取訊息失敗：{exc}")
                 continue
 
+            linked_message = Message.from_discord(
+                linked_message_raw,
+                registry=source_message.room.registry,
+            )
             key = _message_key(linked_message.id)
             info.reply_targets[key] = linked_message
             _collect_image_targets(linked_message, info)

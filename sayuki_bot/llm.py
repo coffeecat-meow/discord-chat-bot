@@ -7,10 +7,11 @@ from datetime import datetime
 from typing import Any
 
 from openai import AsyncOpenAI
+from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 import math_tools
 
-from .config import TW_TZ
+from .config import ModelSettings, TW_TZ
 from .search import BrowserScan, search_web
 from .tool_tags import MEMORY_TOOL_NAMES, find_balanced_tool_tags
 
@@ -70,26 +71,25 @@ def _messages_for_log(messages: list) -> tuple[list[dict[str, Any]], int, int]:
 class OpenRouterLLM:
     def __init__(
         self,
-        api_key: str,
-        model: str,
-        small_model: str,
-        vl_model: str,
+        model: ModelSettings,
+        small_model: ModelSettings,
+        vl_model: ModelSettings,
         tool_stats_mgr=None,
         invocation_logger=None,
         use_reasoning_effort: bool = False,
         reasoning_effort: str = "medium",
     ):
         self.client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
+            base_url=model.url,
+            api_key=model.api_key,
             default_headers={
                 "HTTP-Referer": "https://github.com/SayukiBot",
                 "X-Title": "Sayuki Discord Bot",
             },
         )
-        self.model = model
-        self.small_model = small_model or model
-        self.vl_model = vl_model
+        self.model = model.name
+        self.small_model = small_model.name or model.name
+        self.vl_model = vl_model.name
         self.tool_stats_mgr = tool_stats_mgr
         self.invocation_logger = invocation_logger
         self.use_reasoning_effort = use_reasoning_effort
@@ -138,7 +138,7 @@ class OpenRouterLLM:
         )
 
     async def describe_image_async(self, image_url: str) -> str:
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "user",
                 "content": [
@@ -192,7 +192,7 @@ class OpenRouterLLM:
             return f"圖片解析失敗 ({exc})"
 
     async def _process_browser_scan_async(self, scan: BrowserScan) -> str:
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "system",
                 "content": (
@@ -260,7 +260,7 @@ class OpenRouterLLM:
         use_reasoning_effort: bool = False,
         call_type: str = "summary",
     ) -> str:
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "system",
                 "content": (

@@ -20,10 +20,12 @@ from .conversation_log import ConversationLogger
 from .llm import OpenRouterLLM
 from .memory import MemoryManager
 from .models import Request
+from .types import Message as ChatMessage
 from .search import read_web_page
 from .state import BotStats
 from .tool_tags import MEMORY_TOOL_NAMES, find_balanced_tool_tags, strip_balanced_tool_tags
 from .ui import InteractiveAskView
+from .types import Message
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ CHECK_ROLES_RE = re.compile(r"\[\[CHECK_ROLES:\s*(\d+)\s*\]\]")
 USER_STATS_RE = re.compile(r"\[\[USER_STATS:\s*(\d+)\s*\]\]")
 LOOKUP_MEMORY_RE = re.compile(r"\[\[LOOKUP_MEMORY:\s*(\d+)\s*\]\]")
 CHECK_PRESENCE_RE = re.compile(r"\[\[CHECK_PRESENCE:\s*(\d+)\s*\]\]")
+JOIN_VOICE_RE = re.compile(r"\[\[JOIN_VOICE:\s*(\d+)\s*\]\]")
 READ_WEB_RE = re.compile(r"\[\[READ_WEB:\s*(https?://.*?)\s*\]\]", flags=re.DOTALL)
 VIEW_IMAGE_RE = re.compile(r"\[\[VIEW_IMAGE:\s*#?(msg_\d{1,})\s*\]\]")
 QUERY_TOOL_RE = re.compile(
@@ -669,7 +672,12 @@ class Scheduler:
                     detail = "建立討論串失敗，找不到目標頻道"
                     continue
 
-                source_message = interaction_obj if isinstance(interaction_obj, discord.Message) else getattr(interaction_obj, "message", None)
+                if isinstance(interaction_obj, ChatMessage):
+                    source_message = interaction_obj.message
+                elif isinstance(interaction_obj, discord.Message):
+                    source_message = interaction_obj
+                else:
+                    source_message = getattr(interaction_obj, "message", None)
                 if source_message and hasattr(source_message, "create_thread"):
                     thread = await source_message.create_thread(name=title, auto_archive_duration=1440)
                 else:
@@ -1214,7 +1222,7 @@ class Scheduler:
         interaction_obj,
         text: str,
         is_proactive: bool = False,
-        reply_targets: dict[str, object] | None = None,
+        reply_targets: dict[str, Message] | None = None,
         embed=None,
         view=None,
         files=None,
@@ -1267,7 +1275,8 @@ class Scheduler:
                     reply_target = reply_targets.get(reply_target_key)
                 if reply_target:
                     await reply_target.reply(**kwargs, mention_author=False)
-                    used_reply_target_keys.add(reply_target_key)
+                    if reply_target_key:
+                        used_reply_target_keys.add(reply_target_key)
                 elif isinstance(interaction_obj, discord.Interaction):
                     if not interaction_obj.response.is_done():
                         await interaction_obj.response.send_message(**kwargs)
@@ -1565,6 +1574,35 @@ class Scheduler:
                 await self.user_stats_mgr.record_no_response(req.target_user_id, req.target_user_name)
             return
 
+        if bool(JOIN_VOICE_RE.search(raw_response)):
+            voice_id = JOIN_VOICE_RE.search(raw_response)
+            if self.bot and voice_id:
+                voice_channel = self.bot.get_channel(int(voice_id.group(1)))
+                if voice_channel is None:
+                    logger.error("加入語音失敗：查不到頻道 ID %s", voice_id.group(1))
+                    return
+                voice_bridge = getattr(
+                    getattr(self.bot, "sayuki", None),
+                    "voice_bridge_client",
+                    None,
+                )
+                if voice_bridge is not None:
+                    try:
+                        await voice_bridge.join(
+                            getattr(voice_channel.guild, "id", 0),
+                            voice_channel.id,
+                        )
+                        logger.info(
+                            "已請求 Node.js voice bridge 加入頻道 %s",
+                            voice_channel.id,
+                        )
+                    except Exception as exc:
+                        logger.error("Node.js voice bridge 加入語音失敗: %s", exc)
+                    return
+                logger.error(
+                    "語音橋接未啟用，請設定 VOICE_BRIDGE_ENABLED=true"
+                )
+
         for round_number in range(1, MAX_QUERY_TOOL_ROUNDS + 1):
             used_query_tool = await self._run_query_tools_once(
                 raw_response,
@@ -1848,7 +1886,14 @@ class Scheduler:
             started = perf_counter()
             success = False
             try:
-                target_msg = interaction_obj if isinstance(interaction_obj, discord.Message) else interaction_obj.message
+                if isinstance(interaction_obj, ChatMessage):
+                    target_msg = interaction_obj.message
+                elif isinstance(interaction_obj, discord.Message):
+                    target_msg = interaction_obj
+                else:
+                    target_msg = getattr(interaction_obj, "message", None)
+                if target_msg is None:
+                    return
                 await target_msg.add_reaction(emoji.strip())
                 success = True
             except Exception:

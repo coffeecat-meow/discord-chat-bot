@@ -59,6 +59,7 @@ If you need to perform an action, include one of these tags in your response. Th
 - Calculate math: [[MATH_CALC: expression]]
 - Plot a function: [[MATH_PLOT: function]]
 - Render LaTeX as an image: [[MATH_LATEX: LaTeX code]]
+- Join a voice channel and receive speech: [[JOIN_VOICE: channel ID]]
 
 All tools can be combined with natural text. Use them only when they help the conversation.
 Discord channel tags like `<#channel_id>` and Discord message links are resolved by the runtime into a Discord reference context when possible.

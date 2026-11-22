@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import inspect
-from collections import deque
 from datetime import datetime
 
 import discord
 
 from .config import TW_TZ
+from .types import Message
 from .state import BotStats
 
 
@@ -16,31 +16,24 @@ MAX_COMPONENT_LABELS = 16
 MAX_DISCORD_COMPONENT_CONTEXT_CHARS = 2200
 
 
-async def get_cached_messages(message: discord.Message, channel_message_cache: dict[str, deque]) -> list[discord.Message]:
-    channel_id = str(message.channel.id)
-
-    if channel_id not in channel_message_cache:
-        channel_message_cache[channel_id] = deque(maxlen=80)
-        async for old_msg in message.channel.history(limit=80, oldest_first=True):
-            channel_message_cache[channel_id].append(old_msg)
-    else:
-        channel_message_cache[channel_id].append(message)
-
-    return list(channel_message_cache[channel_id])
+async def get_cached_messages(message: Message) -> list[Message]:
+    if not isinstance(message, Message):
+        raise TypeError("get_cached_messages expects rooms.Message")
+    return await message.room.get_messages(message)
 
 
-def get_attention_flags(message: discord.Message, bot_user_id: int) -> tuple[bool, bool, bool]:
+def get_attention_flags(message: Message, bot_user_id: int) -> tuple[bool, bool, bool]:
     is_mentioned = bot_user_id in [user.id for user in message.mentions]
     is_keyword = "紗月" in message.clean_content or "sayuki" in message.clean_content.lower()
 
     is_reply = False
-    if message.reference and getattr(message.reference.resolved, "author", None):
+    if message.reference and message.reference.resolved and message.reference.resolved.author:
         is_reply = message.reference.resolved.author.id == bot_user_id
 
     return is_mentioned, is_keyword, is_reply
 
 
-def get_attachment_info(message: discord.Message) -> str:
+def get_attachment_info(message: Message) -> str:
     images = []
     videos = []
     audios = []
@@ -108,7 +101,7 @@ def _user_label(user) -> str:
     return _clean_inline(name, 40)
 
 
-def _message_author_label(message: discord.Message, bot_user_id: int | None = None) -> str:
+def _message_author_label(message: Message, bot_user_id: int | None = None) -> str:
     if bot_user_id and message.author.id == bot_user_id:
         return "你(紗月)"
     return f"{message.author.display_name} (ID:{message.author.id})"
@@ -184,8 +177,8 @@ async def _collect_poll_voters(answer) -> tuple[list[str], bool]:
         return [], True
 
 
-async def _format_poll_context(message: discord.Message, creator_label: str) -> str:
-    poll = getattr(message, "poll", None)
+async def _format_poll_context(message: Message, creator_label: str) -> str:
+    poll = message.poll
     if not poll:
         return ""
 
@@ -282,8 +275,8 @@ def _format_components(components) -> str:
     return f"按鈕/選單：{', '.join(labels)}{suffix}"
 
 
-def _format_embeds_context(message: discord.Message, creator_label: str, components_text: str) -> str:
-    embeds = list(getattr(message, "embeds", []) or [])
+def _format_embeds_context(message: Message, creator_label: str, components_text: str) -> str:
+    embeds = list(message.embeds)
     if not embeds and not components_text:
         return ""
 
@@ -326,11 +319,11 @@ def _format_embeds_context(message: discord.Message, creator_label: str, compone
 
 
 def _format_thread_context(
-    message: discord.Message,
+    message: Message,
     creator_label: str,
     user_labels: dict[int, str],
 ) -> str:
-    thread = getattr(message, "thread", None)
+    thread = message.thread
     if not thread:
         return ""
 
@@ -356,7 +349,7 @@ def _format_thread_context(
 
 
 async def build_discord_component_context(
-    message: discord.Message,
+    message: Message,
     creator_label: str,
     user_labels: dict[int, str] | None = None,
     component_context_cache: dict[int, str] | None = None,
@@ -365,7 +358,7 @@ async def build_discord_component_context(
     component_cache_max_items: int = 500,
 ) -> str:
     now = datetime.now(TW_TZ)
-    cache_key = getattr(message, "id", None)
+    cache_key = message.id
     if (
         cache_key is not None
         and component_context_cache is not None
@@ -383,7 +376,7 @@ async def build_discord_component_context(
     if poll_context:
         blocks.append(poll_context)
 
-    components_text = _format_components(getattr(message, "components", []) or [])
+    components_text = _format_components(message.components)
     embed_context = _format_embeds_context(message, creator_label, components_text)
     if embed_context:
         blocks.append(embed_context)
@@ -423,8 +416,8 @@ async def build_discord_component_context(
 
 
 def should_echo_message(
-    message: discord.Message,
-    cached_msgs: list[discord.Message],
+    message: Message,
+    cached_msgs: list[Message],
     bot_user_id: int,
     echoed_messages: dict[str, dict[str, datetime]],
     lookback_seconds: int,
@@ -470,8 +463,8 @@ def should_echo_message(
 
 
 def should_start_proactive(
-    message: discord.Message,
-    cached_msgs: list[discord.Message],
+    message: Message,
+    cached_msgs: list[Message],
     last_time: datetime,
     cooldown_seconds: int,
 ) -> bool:
@@ -494,9 +487,9 @@ def should_start_proactive(
 
 
 async def build_chat_history(
-    history_msgs: list[discord.Message],
-    cached_msgs: list[discord.Message],
-    current_message: discord.Message,
+    history_msgs: list[Message],
+    cached_msgs: list[Message],
+    current_message: Message,
     bot_user_id: int,
     is_proactive: bool,
     vl_description_cache: dict[int, str],
@@ -505,6 +498,10 @@ async def build_chat_history(
     component_cache_ttl_seconds: int = 30,
     component_cache_max_items: int = 500,
 ) -> str:
+    if not isinstance(current_message, Message):
+        raise TypeError("build_chat_history expects rooms.Message")
+    if any(not isinstance(msg, Message) for msg in [*history_msgs, *cached_msgs]):
+        raise TypeError("build_chat_history expects rooms.Message history")
     chat_history = ""
     user_labels = {
         msg.author.id: _message_author_label(msg, bot_user_id)

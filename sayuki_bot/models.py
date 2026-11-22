@@ -5,6 +5,7 @@ from typing import Any
 
 import discord
 
+from .types import Message
 
 @dataclass
 class Request:
@@ -12,7 +13,7 @@ class Request:
     interaction_obj: Any
     is_proactive: bool = False
     prefix_text: str = ""
-    reply_targets: dict[str, Any] = field(default_factory=dict)
+    reply_targets: dict[str, Message] = field(default_factory=dict)
     image_targets: dict[str, list[str]] = field(default_factory=dict)
     image_target_message_ids: dict[str, int] = field(default_factory=dict)
     image_description_cache: dict[int, str] = field(default_factory=dict)
