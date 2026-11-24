@@ -161,6 +161,7 @@ class ToolExecutor:
             social_actions,
             math_actions,
             web_tools,
+            voice,
         )
 
         modules = {
@@ -170,6 +171,7 @@ class ToolExecutor:
             "social": social_actions,
             "math": math_actions,
             "web": web_tools,
+            "voice": voice,
         }
         return await modules[REGISTRY[name].group].run(self, turn, name, arguments)
 

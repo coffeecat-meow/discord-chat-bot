@@ -15,3 +15,5 @@
 wheel SHA256：`e3a68d3221bee962b33b5eac5faeb12ef85b3ade3498a5439eb8bfff275f52eb`
 
 不包含私人角色卡、金鑰、SQLite、完整私有log、Obscura binary或全平台離線依賴wheelhouse。完整歷史回歸需原開發工作區及舊版fixtures，不屬部署依賴。不要使用中途的 `dist/rc1/` wheel替代本包。
+
+Optional voice bridge and ASR setup: [docs/VOICE.md](docs/VOICE.md). Voice support is disabled by default.

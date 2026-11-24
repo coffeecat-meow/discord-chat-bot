@@ -314,6 +314,8 @@ TOOLS = [
     ),
     Tool("REMIND", ("minutes", "content"), "設定稍後提醒", "social", True, True),
     Tool("STATUS", ("text",), "更新動態狀態，30分鐘後清空", "social", True),
+    Tool("VOICE_JOIN", (), "Join your current voice channel and route ASR transcripts to Sayuki; admin only", "voice", True),
+    Tool("VOICE_LEAVE", (), "Leave the active voice channel and stop transcription; admin only", "voice", True),
     Tool("MUTE", ("user_id", "seconds"), "任性禁言，上限300秒，不能對Bot或群主", "social", True),
     Tool("DM_USER", ("user_id", "content"), "私訊目前群組成員", "social", True),
     Tool(
@@ -382,6 +384,7 @@ GROUP_DESCRIPTIONS = {
     "web": "網頁",
     "memory": "人物、群組與自身記憶的查找、寫入、更正及刪除",
     "social": "互動、提醒與群組管理",
+    "voice": "Voice bridge controls and speech transcription",
     "math": "計算、繪圖、LaTeX、文字編碼與雜湊",
 }
 

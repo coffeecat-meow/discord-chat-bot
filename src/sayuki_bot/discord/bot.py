@@ -80,6 +80,10 @@ class SayukiBot(commands.Bot):
         self.sayuki_status_until = None
         self._closed_resources = False
         self.choice_views = set()
+        from sayuki_bot.voice.plugin import VoicePlugin
+
+        voice_config = config.sections.get("voice", {})
+        self.voice_plugin = VoicePlugin(self) if voice_config.get("enabled", False) else None
         from .admin import register_admin
 
         register_admin(self)
@@ -98,6 +102,17 @@ class SayukiBot(commands.Bot):
             else:
                 self.runtime_guilds.discard(int(row["guild_id"]))
         logger.info("Ready: %s trusted guilds", len(self.runtime_guilds))
+        if self.voice_plugin and (
+            not self.voice_plugin.runner
+            or self.voice_plugin.process is None
+            or self.voice_plugin.process.poll() is not None
+        ):
+            try:
+                if self.voice_plugin.runner:
+                    await self.voice_plugin.stop()
+                await self.voice_plugin.start()
+            except Exception:
+                logger.exception("Voice plugin could not start; text chat remains available")
         if not self.maintenance_task:
             self.maintenance_task = asyncio.create_task(
                 self.maintenance(), name="sayuki-maintenance"
@@ -107,6 +122,30 @@ class SayukiBot(commands.Bot):
                 target = discord.Object(id=guild_id)
                 self.tree.copy_global_to(guild=target)
                 await self.tree.sync(guild=target)
+
+    def submit_external_event(self, event, source, *, reason="plugin", reason_facts=()):
+        """Submit a plugin event through the same storage and conversation engine as Discord input."""
+        if event.guild_id not in self.runtime_guilds:
+            return "rejected_guild"
+        channel = getattr(source, "channel", None)
+        author = getattr(source, "author", None)
+        if getattr(channel, "id", None) != event.channel_id:
+            raise ValueError("External event output route must match its channel_id")
+        if getattr(getattr(channel, "guild", None), "id", None) != event.guild_id:
+            raise ValueError("External event output route must belong to its guild")
+        if getattr(author, "id", None) != event.author_id:
+            raise ValueError("External event author must match its source author")
+        guild = self.get_guild(event.guild_id)
+        if not guild or not guild.get_member(event.author_id):
+            raise ValueError("External event author must be a current guild member")
+        self.db.record_event(event)
+        history = self.history[event.channel_id]
+        if not any(item.id == event.id for item in history):
+            history.append(event)
+        turn = Turn(event, source, list(history), reason)
+        turn.bot_id = self.user.id if self.user else None
+        turn.reason_facts = tuple(reason_facts)
+        return "queued" if self.engine.submit(turn) else "queue_full"
 
     async def on_message(self, message):
         if not message.guild or message.guild.id not in self.runtime_guilds or not self.user:
@@ -296,6 +335,8 @@ class SayukiBot(commands.Bot):
             self._closed_resources = True
             for view in list(self.choice_views):
                 view.stop()
+            if self.voice_plugin:
+                await self.voice_plugin.stop()
             if self.maintenance_task:
                 self.maintenance_task.cancel()
                 await asyncio.gather(self.maintenance_task, return_exceptions=True)

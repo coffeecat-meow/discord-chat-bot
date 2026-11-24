@@ -8,7 +8,7 @@
 
 清除會保留 guild／user／清除時刻／恢復同意這些最小阻擋欄位，不保留被清除文字。再次啟用新記憶不代表允許舊檔回灌。只有本人在已啟用伺服器執行 `/sayuki data_restore_import confirm:true` 才能放行管理匯入；指令沒有指定他人的參數，不會自動啟用記憶或執行匯入，現有 opt-out 仍生效。再次清除會撤銷前次恢復同意。無法由舊格式辨識的第三方間接提及仍非完整刪除保證。
 
-Bot與apply匯入器共用 DatabaseLock：相同配置／實體路徑側檔，以及獨立的device/inode身分鎖。同一作業系統使用者即使以反向符號連結、跨目錄硬連結或不同TMPDIR啟動也涵蓋；身分鎖檔位於POSIX `/tmp/sayuki-database-locks-UID`、權限0700，不直接flock SQLite檔案。這是合作程序單例鎖，不防範其他程式刻意替換運行中的資料庫，也不是跨主機鎖。請仍停止Bot再匯入，不自行刪除持鎖中的側檔。Windows退路未實機驗證。
+Bot與apply匯入器共用 DatabaseLock：相同配置／實體路徑側檔，以及獨立的device/inode身分鎖。同一作業系統使用者即使以反向符號連結、跨目錄硬連結或不同TMPDIR啟動也涵蓋；身分鎖檔位於POSIX `/tmp/sayuki-database-locks-UID`、權限0700，不直接flock SQLite檔案。這是合作程序單例鎖，不防範其他程式刻意替換運行中的資料庫，也不是跨主機鎖。請仍停止Bot再匯入，不自行刪除持鎖中的側檔。Windows msvcrt鎖與LOCALAPPDATA路徑已於本次Windows啟動實機驗；其他Windows環境的ACL仍未全面驗證。
 
 本節優先於下方早期交付中「保存／清除再匯入尚未決定」的歷史敘述。完整驗證狀態見 [RC 主交付](handoff/RC-COMPLETION.md)。
 

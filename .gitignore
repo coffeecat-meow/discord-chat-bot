@@ -9,6 +9,7 @@ data/
 logs/
 backups/
 verification/**/*.sqlite3
+node_modules/
 
 # 大型二進位檔與發佈包
 bin/obscura

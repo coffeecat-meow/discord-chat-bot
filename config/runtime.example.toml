@@ -135,3 +135,18 @@ during_sleep = false
 max_tool_rounds = 6
 # 出列開始計時，包含查詢與發送；取消不撤回已完成操作。
 timeout_seconds = 180
+
+[voice]
+# Optional speech bridge. Requires Node.js and an ASR provider account.
+enabled = false
+bridge_port = 8787
+pcm_port = 8788
+asr_provider = "openai-compatible" # openai-compatible, nvidia, elevenlabs
+asr_model = "whisper-1"
+# Optional override; defaults follow asr_provider.
+# asr_base_url = "https://api.openai.com/v1"
+asr_api_key_env = "VOICE_ASR_API_KEY"
+asr_language = ""
+silence_seconds = 1.5
+recordings_enabled = false
+recordings_directory = "data/voice-recordings"

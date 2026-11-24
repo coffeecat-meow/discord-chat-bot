@@ -42,6 +42,50 @@ def register_admin(bot):
         parts.append(f"下次睡眠{start:%m/%d %H:%M}～{end:%H:%M}")
         return "睡眠:" + "，".join(parts)
 
+    @group.command(name="voice-join", description="Join your current voice channel and enable ASR")
+    async def voice_join(interaction: discord.Interaction):
+        if not await admin(interaction):
+            return
+        plugin = getattr(bot, "voice_plugin", None)
+        member_voice = getattr(interaction.user, "voice", None)
+        channel = getattr(member_voice, "channel", None)
+        if not plugin:
+            await interaction.response.send_message("Voice plugin is disabled.", ephemeral=True)
+            return
+        if not interaction.guild or not channel or channel.guild.id != interaction.guild.id:
+            await interaction.response.send_message(
+                "Join a voice channel in this server first.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await plugin.join(interaction.guild.id, channel.id, interaction.channel_id)
+            await interaction.followup.send(
+                f"Joined {channel.name}; transcripts will enter {interaction.channel.mention}.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            await interaction.followup.send(
+                f"Voice operation failed: {type(exc).__name__}: {exc}", ephemeral=True
+            )
+
+    @group.command(name="voice-leave", description="Leave voice and stop ASR")
+    async def voice_leave(interaction: discord.Interaction):
+        if not await admin(interaction):
+            return
+        plugin = getattr(bot, "voice_plugin", None)
+        if not plugin:
+            await interaction.response.send_message("Voice plugin is disabled.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await plugin.leave(interaction.guild.id)
+            await interaction.followup.send("Voice session stopped.", ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(
+                f"Voice operation failed: {type(exc).__name__}: {exc}", ephemeral=True
+            )
+
     @group.command(name="wake", description="立刻叫醒紗月，並取消今晚的起床時間調整")
     async def wake(interaction: discord.Interaction):
         if not await admin(interaction):

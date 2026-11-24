@@ -104,6 +104,11 @@ class Access:
         channel = self.channel(turn, turn.event.channel_id)
         member = self.requester(turn)
         is_admin = turn.event.author_id in self.config.admins
+        if name in {"VOICE_JOIN", "VOICE_LEAVE"}:
+            if not is_admin:
+                raise PermissionError("Voice controls are admin-only")
+            if not getattr(self.bot, "voice_plugin", None):
+                raise PermissionError("Voice plugin is disabled")
         if name == "SEND_STICKER":
             from .stickers import guild_sticker
 

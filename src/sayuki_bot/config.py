@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tomllib
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -245,6 +246,38 @@ def load_config(path: str | Path | None = None) -> Config:
     for prefix in ["wait_typing", "wait_pause"]:
         if delivery.get(prefix + "_min", 0) > delivery.get(prefix + "_max", float("inf")):
             raise ValueError(f"delivery.{prefix}_min exceeds max")
+    voice = sections.get("voice", {})
+    for name in ("enabled", "recordings_enabled"):
+        if type(voice.get(name, False)) is not bool:
+            raise ValueError(f"voice.{name} must be a boolean")
+    if voice.get("enabled", False):
+        provider = voice.get("asr_provider", "openai-compatible")
+        if provider not in {"openai-compatible", "nvidia", "elevenlabs"}:
+            raise ValueError("voice.asr_provider must be openai-compatible, nvidia or elevenlabs")
+        if not voice.get("asr_model") or not voice.get("asr_api_key_env"):
+            raise ValueError("Enabled voice requires voice.asr_model and voice.asr_api_key_env")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", voice["asr_api_key_env"]):
+            raise ValueError("voice.asr_api_key_env must be an environment variable name")
+        provider_url = {
+            "nvidia": "https://integrate.api.nvidia.com/v1",
+            "elevenlabs": "https://api.elevenlabs.io",
+            "openai-compatible": "https://api.openai.com/v1",
+        }[provider]
+        endpoint = urlsplit(voice.get("asr_base_url", provider_url))
+        if not endpoint.hostname or endpoint.username or endpoint.password or not (
+            endpoint.scheme == "https"
+            or endpoint.scheme == "http" and endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise ValueError("voice.asr_base_url requires HTTPS, except loopback development")
+        for name in ("bridge_port", "pcm_port"):
+            value = voice.get(name, 8787 if name == "bridge_port" else 8788)
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+                raise ValueError(f"voice.{name} must be a TCP port")
+        if voice.get("bridge_port", 8787) == voice.get("pcm_port", 8788):
+            raise ValueError("voice.bridge_port and voice.pcm_port must differ")
+        silence = voice.get("silence_seconds", 1.5)
+        if isinstance(silence, bool) or not isinstance(silence, (int, float)) or not 0.25 <= silence <= 10:
+            raise ValueError("voice.silence_seconds must be between 0.25 and 10")
     config = Config(root, sections, policy)
     from sayuki_bot.llm.routing import validate_routes
 

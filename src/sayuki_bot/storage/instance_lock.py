@@ -5,7 +5,6 @@ import json
 import os
 import socket
 import stat
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -183,15 +182,21 @@ class DatabaseLock:
     @staticmethod
     def _identity_path(info):
         # POSIX processes must agree even when TMPDIR or pathname aliases differ.
-        base = Path("/tmp") if os.name == "posix" else Path(tempfile.gettempdir())
-        uid = os.getuid() if hasattr(os, "getuid") else "local"
-        directory = base / f"sayuki-database-locks-{uid}"
-        directory.mkdir(mode=0o700, exist_ok=True)
+        if os.name == "posix":
+            base = Path("/tmp")
+            uid = os.getuid()
+            directory = base / f"sayuki-database-locks-{uid}"
+        else:  # Windows st_mode does not expose POSIX permission bits.
+            local_app_data = os.environ.get("LOCALAPPDATA")
+            if not local_app_data:
+                raise InstanceLockError("LOCALAPPDATA is required for the Windows database lock")
+            directory = Path(local_app_data) / "Temp" / "sayuki-database-locks-local"
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         actual = directory.lstat()
         if (
             not stat.S_ISDIR(actual.st_mode)
-            or actual.st_mode & 0o077
-            or (hasattr(os, "getuid") and actual.st_uid != os.getuid())
+            or os.name == "posix"
+            and (actual.st_mode & 0o077 or actual.st_uid != os.getuid())
         ):
             raise InstanceLockError("資料庫鎖目錄的擁有者或權限不正確")
         return directory / f"{info.st_dev:x}-{info.st_ino:x}.lock"
