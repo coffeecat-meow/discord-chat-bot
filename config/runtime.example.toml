@@ -136,7 +136,10 @@ max_tool_rounds = 6
 # 出列開始計時，包含查詢與發送；取消不撤回已完成操作。
 timeout_seconds = 180
 
-[voice]
+[plugins]
+enabled = [] # add "voice" to enable the bundled voice plugin
+
+[plugins.voice]
 # Optional speech bridge. Requires Node.js and an ASR provider account.
 enabled = false
 bridge_port = 8787

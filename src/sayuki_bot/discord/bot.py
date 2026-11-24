@@ -52,6 +52,8 @@ class SayukiBot(commands.Bot):
         self.access = Access(self, config)
         self.compiler = ContextCompiler(config, self.memory)
         self.delivery = Delivery(config, self.db, self)
+        from plugins.manager import PluginManager
+        self.plugins = PluginManager(self)
         self.executor = ToolExecutor(self, config, self.db, self.memory, self.model, self.access)
         self.background = BackgroundMemory(
             config,
@@ -80,10 +82,8 @@ class SayukiBot(commands.Bot):
         self.sayuki_status_until = None
         self._closed_resources = False
         self.choice_views = set()
-        from sayuki_bot.voice.plugin import VoicePlugin
-
-        voice_config = config.sections.get("voice", {})
-        self.voice_plugin = VoicePlugin(self) if voice_config.get("enabled", False) else None
+        self.plugins.load()
+        self.voice_plugin = self.plugins.plugins.get("voice")
         from .admin import register_admin
 
         register_admin(self)
@@ -102,15 +102,9 @@ class SayukiBot(commands.Bot):
             else:
                 self.runtime_guilds.discard(int(row["guild_id"]))
         logger.info("Ready: %s trusted guilds", len(self.runtime_guilds))
-        if self.voice_plugin and (
-            not self.voice_plugin.runner
-            or self.voice_plugin.process is None
-            or self.voice_plugin.process.poll() is not None
-        ):
+        if self.plugins.plugins:
             try:
-                if self.voice_plugin.runner:
-                    await self.voice_plugin.stop()
-                await self.voice_plugin.start()
+                await self.plugins.start()
             except Exception:
                 logger.exception("Voice plugin could not start; text chat remains available")
         if not self.maintenance_task:
@@ -335,8 +329,7 @@ class SayukiBot(commands.Bot):
             self._closed_resources = True
             for view in list(self.choice_views):
                 view.stop()
-            if self.voice_plugin:
-                await self.voice_plugin.stop()
+            await self.plugins.stop()
             if self.maintenance_task:
                 self.maintenance_task.cancel()
                 await asyncio.gather(self.maintenance_task, return_exceptions=True)

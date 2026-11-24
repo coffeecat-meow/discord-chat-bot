@@ -22,6 +22,7 @@ class Tool:
     common: bool = False
     optional: tuple[str, ...] = ()
     defaults: tuple[tuple[str, str], ...] = ()
+    route_safe: bool = False
 
     def parse(self, body):
         if len(body) > 12000:
@@ -314,8 +315,6 @@ TOOLS = [
     ),
     Tool("REMIND", ("minutes", "content"), "設定稍後提醒", "social", True, True),
     Tool("STATUS", ("text",), "更新動態狀態，30分鐘後清空", "social", True),
-    Tool("VOICE_JOIN", (), "Join your current voice channel and route ASR transcripts to Sayuki; admin only", "voice", True),
-    Tool("VOICE_LEAVE", (), "Leave the active voice channel and stop transcription; admin only", "voice", True),
     Tool("MUTE", ("user_id", "seconds"), "任性禁言，上限300秒，不能對Bot或群主", "social", True),
     Tool("DM_USER", ("user_id", "content"), "私訊目前群組成員", "social", True),
     Tool(
@@ -372,6 +371,21 @@ REGISTRY = {tool.name: tool for tool in TOOLS}
 assert len(REGISTRY) == len(TOOLS)
 
 
+def register(tool: Tool) -> None:
+    """Add a plugin tool to the live registry before conversations begin."""
+    if not isinstance(tool, Tool):
+        raise TypeError("Plugins must register Tool instances")
+    if tool.name in REGISTRY:
+        raise ValueError(f"Tool already registered: {tool.name}")
+    if not tool.name.isupper() or not tool.name.replace("_", "").isalnum():
+        raise ValueError("Plugin tool names must be uppercase ASCII identifiers")
+    REGISTRY[tool.name] = tool
+
+
+def tools():
+    return tuple(REGISTRY.values())
+
+
 def tool_help(selection: str):
     selection = selection.strip().upper()
     selected = [t for t in TOOLS if t.name == selection or t.group.upper() == selection]
@@ -390,8 +404,9 @@ GROUP_DESCRIPTIONS = {
 
 
 def instruction_block(loaded=(), compact=True):
-    active = [t for t in TOOLS if not compact or t.common or t.name in loaded]
-    hidden = [t for t in TOOLS if t not in active]
+    all_tools = tools()
+    active = [t for t in all_tools if not compact or t.common or t.name in loaded]
+    hidden = [t for t in all_tools if t not in active]
     lines = [t.help() for t in active]
     if hidden:
         groups = {}

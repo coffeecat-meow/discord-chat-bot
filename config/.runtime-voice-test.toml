@@ -136,5 +136,13 @@ max_tool_rounds = 6
 # 出列開始計時，包含查詢與發送；取消不撤回已完成操作。
 timeout_seconds = 180
 
-[voice]
-enabled = trueasr_provider = 'elevenlabs'asr_model = 'scribe_v2'asr_language = 'zho'asr_api_key_env = 'ASR_API_KEY'asr_base_url = 'https://api.elevenlabs.io'silence_seconds = 1.5
+[plugins]
+enabled = ["voice"]
+
+[plugins.voice]
+asr_provider = "elevenlabs"
+asr_model = "scribe_v2"
+asr_language = "zho"
+asr_api_key_env = "ASR_API_KEY"
+asr_base_url = "https://api.elevenlabs.io"
+silence_seconds = 1.5

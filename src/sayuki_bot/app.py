@@ -26,7 +26,7 @@ def main():
         # an explicit config path, whose deployment directory owns its secrets.
         load_dotenv(ROOT / ".env")
         config = load_config()
-    voice = config.sections.get("voice", {})
+    voice = config.get("plugins", "voice", {})
     if voice.get("enabled", False):
         api_key_env = voice["asr_api_key_env"]
         if not os.getenv(api_key_env):

@@ -43,6 +43,7 @@ class Delivery:
     async def send_parts(self, turn, parts, *, check=None):
         import discord
 
+        route = getattr(turn, "plugin_route", None)
         channel = turn.source.channel
         for text, reply, token in visible_segments(parts):
             for offset in range(0, len(text), 1900):
@@ -61,6 +62,11 @@ class Delivery:
                 if check:
                     check()
                 key = f"{turn.id}:text:{len(turn.sent)}"
+                if route is not None:
+                    await route.deliver(chunk)
+                    self.db.trace(turn.id, "virtual_visible", {"plugin": route.plugin, "chars": len(chunk)})
+                    turn.sent.append(chunk)
+                    continue
                 access = getattr(self.bot, "access", None)
                 if access:
                     access.channel(turn, turn.event.channel_id)

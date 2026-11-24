@@ -12,11 +12,13 @@ Voice support is optional and disabled by default. It uses a small Node.js Disco
    npm ci
    ```
 
-2. In `config/runtime.toml`, enable voice and set an ASR model. The example config uses an OpenAI compatible endpoint:
+2. In `config/runtime.toml`, enable the bundled plugin and set an ASR model. The example config uses an OpenAI compatible endpoint:
 
    ```toml
-   [voice]
-   enabled = true
+   [plugins]
+   enabled = ["voice"]
+
+   [plugins.voice]
    asr_provider = "openai-compatible"
    asr_model = "whisper-1"
    asr_api_key_env = "VOICE_ASR_API_KEY"

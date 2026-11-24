@@ -31,6 +31,8 @@ class Access:
         )
 
     def channel(self, turn, channel_id):
+        if getattr(turn, "plugin_route", None) is not None and int(channel_id) == turn.event.channel_id:
+            return turn.source.channel
         trusted = getattr(self.bot, "runtime_guilds", None)
         if trusted is not None and turn.event.guild_id not in trusted:
             raise PermissionError("Guild is no longer trusted")
@@ -101,6 +103,11 @@ class Access:
                 raise PermissionError("Cannot send in destination")
 
     def authorize(self, turn, name, args):
+        if getattr(turn, "plugin_route", None) is not None:
+            from sayuki_bot.tools.registry import REGISTRY
+            if not REGISTRY[name].route_safe:
+                raise PermissionError("This tool is unavailable from a plugin virtual route")
+            return
         channel = self.channel(turn, turn.event.channel_id)
         member = self.requester(turn)
         is_admin = turn.event.author_id in self.config.admins

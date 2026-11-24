@@ -17,7 +17,8 @@ from types import SimpleNamespace
 from aiohttp import web
 
 from .asr import ASRProvider, pcm_to_wav
-from sayuki_bot.conversation.models import Event, Turn
+from plugins.api import InboundEvent, Route
+from sayuki_bot.tools.registry import Tool
 
 logger = logging.getLogger(__name__)
 MAX_PCM_BYTES = 8 * 1024 * 1024
@@ -26,15 +27,38 @@ MAX_PCM_BYTES = 8 * 1024 * 1024
 class VoicePlugin:
     """Optional receiver; transcripts route to the text channel where voice was joined."""
 
+    name = "voice"
+
     def __init__(self, bot):
         self.bot = bot
-        self.config = bot.config.sections["voice"]
+        self.config = bot.config.get("plugins", "voice", {})
         self.asr = ASRProvider(bot.config)
         self.secret = secrets.token_urlsafe(32)
         self.routes: dict[tuple[int, int], int] = {}
         self.runner = None
         self.process: subprocess.Popen | None = None
         self.semaphore = asyncio.Semaphore(4)
+
+    def register(self, runtime):
+        runtime.add_tool(
+            Tool("VOICE_JOIN", (), "Join your current voice channel and route ASR transcripts to Sayuki; admin only", "voice", True),
+            self.execute_tool,
+        )
+        runtime.add_tool(
+            Tool("VOICE_LEAVE", (), "Leave the active voice channel and stop transcription; admin only", "voice", True),
+            self.execute_tool,
+        )
+
+    async def execute_tool(self, turn, name, arguments):
+        if name == "VOICE_JOIN":
+            member = getattr(turn.source, "author", None)
+            channel = getattr(getattr(member, "voice", None), "channel", None)
+            if not channel:
+                raise PermissionError("Join a voice channel before requesting VOICE_JOIN")
+            return await self.join(turn.event.guild_id, channel.id, turn.event.channel_id)
+        if name == "VOICE_LEAVE":
+            return await self.leave(turn.event.guild_id)
+        raise KeyError(name)
 
     async def start(self):
         if self.runner:
@@ -50,7 +74,7 @@ class VoicePlugin:
         except Exception:
             await self.stop()
             raise
-        script = Path(__file__).resolve().parents[3] / "voice_bridge.js"
+        script = Path(__file__).resolve().parent / "voice_bridge.js"
         if not script.is_file():
             await self.stop()
             raise FileNotFoundError(f"Voice bridge script missing: {script}")
@@ -68,7 +92,7 @@ class VoicePlugin:
         )
         try:
             self.process = subprocess.Popen(
-                ["node", str(script)], cwd=str(script.parent), env=env
+            ["node", str(script)], cwd=str(script.parent), env=env
             )
         except Exception:
             await self.stop()
@@ -201,23 +225,36 @@ class VoicePlugin:
         bot = self.bot
         member, text_channel = self._validate_voice_source(guild_id, voice_id, user_id)
         now = datetime.now(timezone.utc)
-        event = Event(
-            time.time_ns(), guild_id, text_channel.id, member.id, member.display_name,
-            f"\u8a9e\u97f3\u8f49\u6587: {text[:1800]}", now,
+        route = Route(
+            self.name,
+            f"{guild_id}:{voice_id}",
+            guild_id,
+            -voice_id,
+            lambda output: self._deliver(text_channel, output),
         )
-        source = SimpleNamespace(channel=text_channel, author=member)
-        status = bot.submit_external_event(
-            event,
-            source,
-            reason="voice",
-            reason_facts=(
+        status = bot.plugins.submit(
+            InboundEvent(
+                route, member.id, member.display_name,
+                f"\u8a9e\u97f3\u8f49\u6587: {text[:1800]}", now, time.time_ns(),
+                (
                 "\u6b64\u8a0a\u606f\u4f86\u81ea\u8a9e\u97f3 ASR ",
                 "\u8f49\u5beb\uff1b\u539f\u6587\u53ef\u80fd\u6709\u8fa8\u8b58\u932f\u8aa4\u3002",
-            ),
+                ),
+                source=SimpleNamespace(channel=text_channel, author=member),
+            )
         )
         if status == "queue_full":
             logger.warning("Voice transcript dropped because the conversation queue is full")
         return status
+
+    async def _deliver(self, channel, text):
+        import discord
+        await channel.send(
+            content=text,
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False, roles=False, users=True, replied_user=False
+            ),
+        )
 
     def _save_recording(self, guild_id, user_id, pcm):
         root = Path(self.config.get("recordings_directory", "data/voice-recordings"))

@@ -40,7 +40,7 @@ class ASRProvider:
     async def transcribe(self, pcm: bytes) -> ASRResult:
         if not pcm:
             return ASRResult("")
-        section = self.config.sections["voice"]
+        section = self.config.get("plugins", "voice", {})
         key = os.environ.get(section["asr_api_key_env"], "")
         if not key:
             raise RuntimeError(f"Set {section['asr_api_key_env']} for voice ASR")
@@ -68,7 +68,7 @@ class ASRProvider:
     async def _elevenlabs(self, section, key, wav):
         import aiohttp
 
-        base = section.get("asr_base_url", "https://api.elevenlabs.io").rstrip("/")
+        base = section.get("asr_base_url", "https://api.elevenlabs.io/v1").rstrip("/")
         data = aiohttp.FormData()
         data.add_field("model_id", section["asr_model"])
         if section.get("asr_language"):
