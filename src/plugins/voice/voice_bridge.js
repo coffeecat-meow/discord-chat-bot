@@ -14,6 +14,7 @@ import prism from "prism-media";
 const token = process.env.BOT_TOKEN;
 const bridgePort = Number(process.env.VOICE_BRIDGE_PORT || "8787");
 const pcmUrl = process.env.VOICE_BRIDGE_PCM_URL;
+const activityUrl = process.env.VOICE_BRIDGE_ACTIVITY_URL;
 const bridgeSecret = process.env.VOICE_BRIDGE_SECRET;
 const silenceSeconds = Number(process.env.VOICE_ASR_SILENCE_SECONDS || "1.5");
 
@@ -77,6 +78,22 @@ async function sendPcm(userId, guildId, channelId, pcm) {
     }),
   });
   if (!response.ok) throw new Error(`PCM callback HTTP ${response.status}`);
+}
+
+async function sendActivity(userId, guildId, channelId) {
+  if (!activityUrl) return;
+  try {
+    await fetch(activityUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-voice-bridge-secret": bridgeSecret,
+      },
+      body: JSON.stringify({ userId, guildId, channelId }),
+    });
+  } catch (error) {
+    console.warn("Voice activity callback failed:", error);
+  }
 }
 
 async function joinVoice(guildId, channelId) {
@@ -149,6 +166,7 @@ async function joinVoice(guildId, channelId) {
   const activeSubscriptions = new Set();
   const receiver = connection.receiver;
   receiver.speaking.on("start", (userId) => {
+    void sendActivity(userId, normalizedGuildId, channelId);
     // 1. 去重關鍵：如果該使用者已經在訂閱狀態中，直接忽略這次的 start 事件
     if (activeSubscriptions.has(userId)) {
       return;

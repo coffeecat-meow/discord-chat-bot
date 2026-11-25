@@ -42,6 +42,8 @@ class VoicePlugin(Plugin):
         self.runner = None
         self.process: subprocess.Popen | None = None
         self.semaphore = asyncio.Semaphore(4)
+        self.last_voice_activity: dict[tuple[int, int], datetime] = {}
+        self.inactivity_task: asyncio.Task | None = None
 
     def register(self, runtime):
         runtime.add_tool(
@@ -69,6 +71,7 @@ class VoicePlugin(Plugin):
             return
         app = web.Application(client_max_size=12 * 1024 * 1024)
         app.router.add_post("/voice/pcm", self._handle_pcm)
+        app.router.add_post("/voice/activity", self._handle_activity)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         try:
@@ -92,6 +95,7 @@ class VoicePlugin(Plugin):
             VOICE_BRIDGE_PORT=str(self.config.get("bridge_port", 8787)),
             VOICE_BRIDGE_PCM_URL=f"http://127.0.0.1:{self.config.get('pcm_port', 8788)}/voice/pcm",
             VOICE_BRIDGE_SECRET=self.secret,
+            VOICE_BRIDGE_ACTIVITY_URL=f"http://127.0.0.1:{self.config.get('pcm_port', 8788)}/voice/activity",
             VOICE_ASR_SILENCE_SECONDS=str(self.config.get("silence_seconds", 1.5)),
         )
         try:
@@ -102,8 +106,13 @@ class VoicePlugin(Plugin):
             await self.stop()
             raise
         logger.info("Voice bridge started (pid=%s)", self.process.pid)
+        self.inactivity_task = asyncio.create_task(self._watch_inactivity())
 
     async def stop(self):
+        if self.inactivity_task:
+            self.inactivity_task.cancel()
+            await asyncio.gather(self.inactivity_task, return_exceptions=True)
+            self.inactivity_task = None
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try:
@@ -123,6 +132,7 @@ class VoicePlugin(Plugin):
                 "/join",
                 {"guildId": str(guild_id), "channelId": str(voice_channel_id)},
             )
+            self.last_voice_activity[(guild_id, voice_channel_id)] = datetime.now(timezone.utc)
             for key in list(self.routes):
                 if key[0] == guild_id and key[1] != voice_channel_id:
                     self.routes.pop(key, None)
@@ -136,7 +146,43 @@ class VoicePlugin(Plugin):
         for key in list(self.routes):
             if key[0] == guild_id and (voice_channel_id is None or key[1] == voice_channel_id):
                 self.routes.pop(key, None)
+                self.last_voice_activity.pop(key, None)
         return result
+
+    async def _handle_activity(self, request):
+        if not hmac.compare_digest(request.headers.get("x-voice-bridge-secret", ""), self.secret):
+            raise web.HTTPUnauthorized()
+        try:
+            payload = await request.json()
+            guild_id = int(payload["guildId"])
+            voice_id = int(payload["channelId"])
+        except (KeyError, TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Invalid voice activity event")
+        if (guild_id, voice_id) not in self.routes:
+            raise web.HTTPForbidden(text="Voice session is not active")
+        self.last_voice_activity[(guild_id, voice_id)] = datetime.now(timezone.utc)
+        return web.json_response({"status": "ok"})
+
+    async def _watch_inactivity(self):
+        while True:
+            await asyncio.sleep(5)
+            now = datetime.now(timezone.utc)
+            for (guild_id, voice_id), last_activity in list(self.last_voice_activity.items()):
+                if (now - last_activity).total_seconds() < 600:
+                    continue
+                try:
+                    await self.leave(guild_id, voice_id)
+                    logger.info(
+                        "Left voice after 10 minutes without speech guild=%s channel=%s",
+                        guild_id,
+                        voice_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to leave inactive voice guild=%s channel=%s",
+                        guild_id,
+                        voice_id,
+                    )
 
     async def _request(self, path, payload):
         import aiohttp
