@@ -144,5 +144,5 @@ asr_provider = "elevenlabs"
 asr_model = "scribe_v2"
 asr_language = "zho"
 asr_api_key_env = "ASR_API_KEY"
-asr_base_url = "https://api.elevenlabs.io"
+asr_base_url = "https://api.elevenlabs.io/v1"
 silence_seconds = 1.5

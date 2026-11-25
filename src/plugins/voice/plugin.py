@@ -18,7 +18,9 @@ from aiohttp import web
 
 from .asr import ASRProvider, pcm_to_wav
 from plugins.api import InboundEvent, Route
+
 from sayuki_bot.tools.registry import Tool
+from sayuki_bot.discord.bot import SayukiBot
 
 logger = logging.getLogger(__name__)
 MAX_PCM_BYTES = 8 * 1024 * 1024
@@ -29,7 +31,7 @@ class VoicePlugin:
 
     name = "voice"
 
-    def __init__(self, bot):
+    def __init__(self, bot: SayukiBot):
         self.bot = bot
         self.config = bot.config.get("plugins", "voice", {})
         self.asr = ASRProvider(bot.config)
