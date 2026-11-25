@@ -19,7 +19,7 @@ from aiohttp import web
 from plugins.manager import PluginManager, SubmitResult
 
 from .asr import ASRProvider, pcm_to_wav
-from plugins.api import InboundEvent, Plugin, Route
+from plugins.api import EventSource, InboundEvent, Plugin, PluginEventSource, Route
 
 from sayuki_bot.api import Event, Tool
 from sayuki_bot.discord.bot import SayukiBot
@@ -239,9 +239,10 @@ class VoicePlugin(Plugin):
             f"語音轉文: {text[:1800]}", now,
         )
         history = list(bot.history[event.channel_id])
-        reason = bot.attention.decide(
-            event, history, bot.user.id, now, allow_echo=False
-        )
+        # reason = bot.attention.decide(
+        #     event, history, bot.user.id, now, allow_echo=False
+        # )
+        reason = "proactive"
         facts = bot.attention.facts(event, history, bot.user.id, now) + (
             "此訊息來自語音 ASR 轉寫；原文可能有辨識錯誤。",
         )
@@ -256,7 +257,7 @@ class VoicePlugin(Plugin):
             InboundEvent(
                 route, member.id, member.display_name,
                 event.text, now, event_id, facts,
-                source=SimpleNamespace(channel=text_channel, author=member),
+                source=PluginEventSource(channel=text_channel, author=member),
                 reason=reason,
             )
         )

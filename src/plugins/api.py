@@ -23,9 +23,11 @@ ToolArguments: TypeAlias = dict[str, str]
 
 class EventSource(Protocol):
     """Minimal source shape needed by the conversation delivery pipeline."""
-    channel: "ChannelSource"
-    author: "AuthorSource"
+    @property
+    def channel(self) -> "ChannelSource": ...
 
+    @property
+    def author(self) -> "AuthorSource": ...
 
 class ChannelSource(Protocol):
     id: int
@@ -33,6 +35,13 @@ class ChannelSource(Protocol):
 
 class AuthorSource(Protocol):
     id: int
+
+
+@dataclass(frozen=True)
+class PluginEventSource:
+    """Concrete source container implementing the read-only EventSource API."""
+    channel: ChannelSource
+    author: AuthorSource
 
 
 class PluginRuntime(Protocol):
