@@ -1,5 +1,8 @@
 """Voice-owned configuration validation."""
 import re
+import os
+import shutil
+from pathlib import Path
 from urllib.parse import urlsplit
 
 
@@ -41,3 +44,17 @@ def validate_config(config):
     # silence = voice.get("silence_seconds", 1.5)
     # if isinstance(silence, bool) or not isinstance(silence, (int, float)) or not 0.25 <= silence <= 10:
     #     raise ValueError("plugins.voice.silence_seconds must be between 0.25 and 10")
+
+
+def startup_check(config):
+    voice = config.get("plugins", "voice", {})
+    errors = []
+    key = voice.get("asr_api_key_env")
+    if key and not os.getenv(key):
+        errors.append(f"Set {key} in .env for voice ASR")
+    if not shutil.which("node"):
+        errors.append("Voice support requires Node.js")
+    plugin_dir = Path(__file__).resolve().parent
+    if not all((plugin_dir / name).is_file() for name in ("voice_bridge.js", "package.json")):
+        errors.append("Voice plugin bridge files are missing")
+    return errors

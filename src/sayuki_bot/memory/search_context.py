@@ -9,7 +9,7 @@ import json
 from zoneinfo import ZoneInfo
 
 from sayuki_bot.context.records import encoded_size, event_record
-from sayuki_bot.conversation.models import Event
+from sayuki_bot.api import Event
 
 
 def enrich_search_result(

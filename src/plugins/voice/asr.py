@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 
+from sayuki_bot.api import Config
+
 
 @dataclass(frozen=True)
 class ASRResult:
@@ -34,7 +36,7 @@ def pcm_to_wav(pcm: bytes) -> bytes:
 
 
 class ASRProvider:
-    def __init__(self, config):
+    def __init__(self, config: Config):
         self.config = config
 
     async def transcribe(self, pcm: bytes) -> ASRResult:

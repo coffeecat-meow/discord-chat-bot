@@ -5,6 +5,12 @@ import contextlib
 import json
 import re
 
+from sayuki_bot.api import Config, Turn
+from sayuki_bot.context.compiler import ContextCompiler
+from sayuki_bot.context.snapshots import ConversationContext
+from sayuki_bot.discord.access import Access
+from sayuki_bot.tools.executor import ToolExecutor
+from sayuki_bot.delivery.service import Delivery
 from sayuki_bot.tools.results import bounded_reports
 from sayuki_bot.conversation.repair import RepairState
 import logging
@@ -12,7 +18,7 @@ from datetime import datetime, timezone
 from time import perf_counter
 
 from sayuki_bot.delivery.service import DeliveryStopped
-from sayuki_bot.llm.client import EmptyCompletion, supports_final_tool_reasoning
+from sayuki_bot.llm.client import EmptyCompletion, ModelClient, supports_final_tool_reasoning
 from sayuki_bot.tools.protocol import Part, parse
 from sayuki_bot.tools.registry import REGISTRY
 from sayuki_bot.storage import jsonl_log
@@ -62,7 +68,7 @@ def _preview(value, limit=300):
 
 
 class Engine:
-    def __init__(self, config, compiler, model, executor, delivery, access, background=None):
+    def __init__(self, config: Config, compiler: ContextCompiler, model: ModelClient, executor: ToolExecutor, delivery: Delivery, access: Access, background=None):
         self.config, self.compiler, self.model = config, compiler, model
         self.executor, self.delivery, self.access = executor, delivery, access
         self.background = background
@@ -70,12 +76,12 @@ class Engine:
         self.workers = {}
         self.active = {}
         self.closed = False
-        self.context = None
+        self.context: ConversationContext | None = None
         self.task_runs = {}
         # Latest turn per guild for /sayuki debug_last; memory only, never stored.
         self.last_debug = {}
 
-    def submit(self, turn):
+    def submit(self, turn: Turn):
         if self.closed:
             return False
         key = (turn.event.guild_id, turn.event.channel_id)
@@ -556,7 +562,7 @@ class Engine:
                 return
         messages = self.compiler.compile(turn, self.access.allowed_channels(turn))
         verification = Verification.from_text(turn.event.text, turn.event.guild_id)
-        turn.continuation = ContinuationState(verification)
+        turn.continuation = ContinuationState(verification=verification)
         if verification.required:
             turn.verification = verification.snapshot()
             messages[1]["content"] += verification.instruction()

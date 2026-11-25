@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sayuki_bot.conversation.models import Event
+from sayuki_bot.api import Event
 from .records import bounded_record, event_record, encoded_size
 from .relevance import topic_terms
 

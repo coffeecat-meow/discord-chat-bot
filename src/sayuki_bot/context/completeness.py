@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import json
 import re
 
-from sayuki_bot.conversation.models import Event
+from sayuki_bot.api import Event
 from .records import encoded_size, event_record
 from .relevance import topic_terms
 

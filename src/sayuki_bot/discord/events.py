@@ -1,6 +1,6 @@
 import re
 
-from sayuki_bot.conversation.models import Event
+from sayuki_bot.api import Event
 from .stickers import records
 
 

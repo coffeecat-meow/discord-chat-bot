@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import discord
 
-from sayuki_bot.conversation.models import Event, Turn
+from sayuki_bot.api import Event, Turn
 
 logger = logging.getLogger(__name__)
 

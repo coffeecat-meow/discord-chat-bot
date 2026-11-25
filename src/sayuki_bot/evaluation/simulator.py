@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from sayuki_bot.context.compiler import ContextCompiler
 from sayuki_bot.conversation.engine import Engine
-from sayuki_bot.conversation.models import Event, Generation, Turn
+from sayuki_bot.api import Event, Generation, Turn
 from sayuki_bot.delivery.service import Delivery
 from sayuki_bot.memory.service import MemoryService
 from sayuki_bot.tools.registry import REGISTRY

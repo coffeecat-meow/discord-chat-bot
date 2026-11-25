@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import discord
 from discord.ext import commands
 
-from sayuki_bot.conversation.models import Event, Turn
+from sayuki_bot.api import Config, Event, Turn
 from .events import event_from_message
 from sayuki_bot.conversation.attention import Attention
 from sayuki_bot.conversation.engine import Engine
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class SayukiBot(commands.Bot):
-    def __init__(self, config, api_key):
+    def __init__(self, config: Config, api_key):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
@@ -199,6 +199,8 @@ class SayukiBot(commands.Bot):
 
     def record_delivered(self, message):
         """Called only after Discord confirms send; gateway echo is idempotent."""
+        if not self.user:
+            return
         event = event_from_message(message, self.user.id)
         self.db.record_event(event)
         history = self.history[event.channel_id]
@@ -209,7 +211,7 @@ class SayukiBot(commands.Bot):
         self, interaction, text, reason="interaction", *, panel_context=None, panel_view=None
     ):
         # Buttons never count as an @ that wakes a sleeping bot.
-        if not interaction.guild or interaction.guild.id not in self.runtime_guilds:
+        if not self.user or not interaction.guild or interaction.guild.id not in self.runtime_guilds:
             return {"status": "rejected"}
         if self.config.sleep.sleeping(datetime.now(timezone.utc)):
             return {"status": "sleeping"}
@@ -313,7 +315,7 @@ class SayukiBot(commands.Bot):
                 if (asleep, label) != previous_sleep or expired:
                     await self.change_presence(
                         status=discord.Status.idle if asleep else discord.Status.online,
-                        activity=discord.Game(label) if asleep else None,
+                        activity=discord.Game(label if label else "") if asleep else None,
                     )
                     previous_sleep = (asleep, label)
                     self.sayuki_status_until = None

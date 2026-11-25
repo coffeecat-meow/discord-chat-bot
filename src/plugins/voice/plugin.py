@@ -17,22 +17,22 @@ from types import SimpleNamespace
 from aiohttp import web
 
 from .asr import ASRProvider, pcm_to_wav
-from plugins.api import InboundEvent, Route
+from plugins.api import InboundEvent, Plugin, Route
 
-from sayuki_bot.tools.registry import Tool
+from sayuki_bot.api import Tool
 from sayuki_bot.discord.bot import SayukiBot
 
 logger = logging.getLogger(__name__)
 MAX_PCM_BYTES = 8 * 1024 * 1024
 
 
-class VoicePlugin:
+class VoicePlugin(Plugin):
     """Optional receiver; transcripts route to the text channel where voice was joined."""
 
     name = "voice"
 
     def __init__(self, bot: SayukiBot):
-        self.bot = bot
+        super().__init__(bot)
         self.config = bot.config.get("plugins", "voice", {})
         self.asr = ASRProvider(bot.config)
         self.secret = secrets.token_urlsafe(32)

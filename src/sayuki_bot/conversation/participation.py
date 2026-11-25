@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 
+from sayuki_bot.api import Config, Turn, Event
 
-def candidate_history(config, event, history, bot_id):
+
+def candidate_history(config: Config, event: Event, history: list[Event], bot_id: int | None):
     if (not config.get("conversation", "continuation_enabled", True)
             or event.reply_to or event.text.lstrip().startswith("!") or not bot_id):
         return []
@@ -20,7 +22,7 @@ def candidate_history(config, event, history, bot_id):
     return before if any(e.author_id == bot_id for e in before) else []
 
 
-def record(event, bot_id, limit):
+def record(event: Event, bot_id: int | None, limit: int):
     return {
         "message_id": event.id, "author_id": event.author_id,
         "channel_id": event.channel_id, "guild_id": event.guild_id,
@@ -31,7 +33,7 @@ def record(event, bot_id, limit):
     }
 
 
-async def classify(config, model, turn):
+async def classify(config, model, turn: Turn):
     history = turn.cross_sources or candidate_history(config, turn.event, turn.history, turn.bot_id)
     if turn.cross_sources:
         local = sorted((e for e in turn.history if e.id != turn.event.id

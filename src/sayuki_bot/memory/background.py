@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
-from sayuki_bot.conversation.models import Event
+from sayuki_bot.api import Event
 from sayuki_bot.llm.routing import route
 from sayuki_bot.storage.database import utcnow
 

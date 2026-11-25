@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from sayuki_bot.storage.database import utcnow
-from sayuki_bot.conversation.models import Event
+from sayuki_bot.api import Event
 from datetime import timezone
 
 from . import migration_o7a_contract as contract

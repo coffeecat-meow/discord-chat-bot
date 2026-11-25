@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import shutil
 
 from sayuki_bot.config import ROOT, load_config
 
@@ -26,15 +25,10 @@ def main():
         # an explicit config path, whose deployment directory owns its secrets.
         load_dotenv(ROOT / ".env")
         config = load_config()
-    voice = config.get("plugins", "voice", {})
-    if voice.get("enabled", False):
-        api_key_env = voice["asr_api_key_env"]
-        if not os.getenv(api_key_env):
-            parser.error(f"Set {api_key_env} in .env for voice ASR")
-        if not shutil.which("node"):
-            parser.error("Voice support is enabled; install Node.js 20 or later")
-        if not (config.root / "node_modules" / "@discordjs" / "voice").exists():
-            parser.error("Voice support is enabled; run npm ci in the project root")
+    from plugins.manager import PluginManager
+    failures = PluginManager.startup_checks(config, config.get("plugins", "enabled", []))
+    if failures:
+        parser.error("; ".join(failures))
     if not config.path("persona").is_file():
         parser.error("Persona file does not exist")
     if args.check:

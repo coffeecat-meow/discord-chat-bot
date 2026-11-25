@@ -11,7 +11,7 @@ from time import perf_counter
 from urllib.parse import urlsplit
 from uuid import uuid4, uuid5
 
-from sayuki_bot.conversation.models import Generation
+from sayuki_bot.api import Generation
 from sayuki_bot.llm.routing import route, validate_routes
 from sayuki_bot.storage import jsonl_log
 
