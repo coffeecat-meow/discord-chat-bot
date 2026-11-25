@@ -10,10 +10,40 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, TypeAlias
+from typing import TYPE_CHECKING, Awaitable, Callable, Protocol, TypeAlias
+
+if TYPE_CHECKING:
+    from plugins.manager import PluginManager
+    from sayuki_bot.discord.bot import SayukiBot
+    from sayuki_bot.api import Tool, Turn
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 ToolArguments: TypeAlias = dict[str, str]
+
+
+class EventSource(Protocol):
+    """Minimal source shape needed by the conversation delivery pipeline."""
+    channel: "ChannelSource"
+    author: "AuthorSource"
+
+
+class ChannelSource(Protocol):
+    id: int
+
+
+class AuthorSource(Protocol):
+    id: int
+
+
+class PluginRuntime(Protocol):
+    """Operations exposed to plugins while they register and submit work."""
+    def add_tool(
+        self,
+        tool: "Tool",
+        handler: Callable[["Turn", str, ToolArguments], Awaitable[JsonValue] | JsonValue],
+    ) -> None: ...
+    def register_route(self, route: Route) -> Route: ...
+    def submit(self, inbound: InboundEvent) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -47,7 +77,7 @@ class InboundEvent:
     created_at: datetime
     event_id: int | None = None
     facts: tuple[str, ...] = ()
-    source: object | None = None
+    source: EventSource | None = None
     # Plugins may run the same admission policy as native messages and pass
     # its result here; ordinary integrations default to an accepted plugin turn.
     reason: str = "plugin"
@@ -63,12 +93,12 @@ class Plugin(ABC):
     """
     name: str = ""
 
-    def __init__(self, bot: object) -> None:
+    def __init__(self, bot: SayukiBot) -> None:
         """Store the host bot; subclasses may extend initialization."""
         self.bot = bot
 
     @abstractmethod
-    def register(self, runtime: object) -> None: ...
+    def register(self, runtime: PluginRuntime) -> None: ...
     """Register tools and other synchronous hooks before turns are processed."""
 
     async def start(self) -> None:

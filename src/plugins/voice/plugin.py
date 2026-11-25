@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 from aiohttp import web
 
+from plugins.manager import PluginManager, SubmitResult
+
 from .asr import ASRProvider, pcm_to_wav
 from plugins.api import InboundEvent, Plugin, Route
 
@@ -223,8 +225,12 @@ class VoicePlugin(Plugin):
             raise PermissionError("Voice session output channel is unavailable")
         return member, text_channel
 
-    async def _submit_transcript(self, guild_id, voice_id, user_id, text):
+    async def _submit_transcript(self, guild_id, voice_id, user_id, text) -> SubmitResult:
         bot = self.bot
+
+        if not bot.user:
+            return "rejected_guild"
+
         member, text_channel = self._validate_voice_source(guild_id, voice_id, user_id)
         now = datetime.now(timezone.utc)
         event_id = time.time_ns()
@@ -233,7 +239,9 @@ class VoicePlugin(Plugin):
             f"語音轉文: {text[:1800]}", now,
         )
         history = list(bot.history[event.channel_id])
-        reason = bot.attention.decide(event, history, bot.user.id, now)
+        reason = bot.attention.decide(
+            event, history, bot.user.id, now, allow_echo=False
+        )
         facts = bot.attention.facts(event, history, bot.user.id, now) + (
             "此訊息來自語音 ASR 轉寫；原文可能有辨識錯誤。",
         )

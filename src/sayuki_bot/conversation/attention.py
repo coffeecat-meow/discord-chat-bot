@@ -12,7 +12,15 @@ class Attention:
         self.last_proactive = {}
         self.echoes = {}
 
-    def decide(self, event: Event, history: list[Event], bot_id: int, now: datetime) -> str:
+    def decide(
+        self,
+        event: Event,
+        history: list[Event],
+        bot_id: int,
+        now: datetime,
+        *,
+        allow_echo: bool = True,
+    ) -> str:
         # Gate before every conversational path, including direct echo sends.
         if self.config.sleep.sleeping(now):
             return "mention" if event.direct_mention else "ignore"
@@ -37,7 +45,8 @@ class Attention:
         matching = {x.author_id for x in recent if x.text.strip() == event.text.strip()}
         key = (event.channel_id, event.text.strip())
         if (
-            self.config.get("conversation", "echo_enabled", True)
+            allow_echo
+            and self.config.get("conversation", "echo_enabled", True)
             and key[1]
             and len(matching) >= self.config.get("conversation", "echo_min_users", 3)
             and key not in self.echoes
