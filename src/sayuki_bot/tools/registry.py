@@ -388,7 +388,11 @@ def tools():
 
 def tool_help(selection: str):
     selection = selection.strip().upper()
-    selected = [t for t in TOOLS if t.name == selection or t.group.upper() == selection]
+    selected = [
+        tool
+        for tool in REGISTRY.values()
+        if tool.name == selection or tool.group.upper() == selection
+    ]
     return selected
 
 
