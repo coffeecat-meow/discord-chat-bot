@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from sayuki_bot.discord.bot import SayukiBot
 
 ToolHandler = Callable[[Turn, str, ToolArguments], Awaitable[JsonValue] | JsonValue]
-SubmitResult = Literal["rejected_guild", "queued", "queue_full"]
+SubmitResult = Literal["rejected_guild", "ignored", "queued", "queue_full"]
 
 logger = logging.getLogger(__name__)
 
@@ -105,10 +105,15 @@ class PluginManager:
             inbound.text,
             inbound.created_at,
         )
+        self.bot.db.record_event(event)
+        history = self.bot.history[event.channel_id]
+        if not any(previous.id == event.id for previous in history):
+            history.append(event)
         source = inbound.source or SimpleNamespace(
             channel=SimpleNamespace(id=route.channel_id), author=SimpleNamespace(id=inbound.author_id)
         )
-        turn = Turn(event, source, list(self.bot.history[event.channel_id]), reason="plugin")
+        turn = Turn(event, source, list(history), reason=inbound.reason)
         turn.plugin_route, turn.bot_id, turn.reason_facts = route, (self.bot.user.id if self.bot.user else None), tuple(inbound.facts)
-        self.bot.history[event.channel_id].append(event)
+        if inbound.reason == "ignore":
+            return "ignored"
         return "queued" if self.bot.engine.submit(turn) else "queue_full"

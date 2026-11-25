@@ -48,6 +48,9 @@ class InboundEvent:
     event_id: int | None = None
     facts: tuple[str, ...] = ()
     source: object | None = None
+    # Plugins may run the same admission policy as native messages and pass
+    # its result here; ordinary integrations default to an accepted plugin turn.
+    reason: str = "plugin"
 
 
 class Plugin(ABC):

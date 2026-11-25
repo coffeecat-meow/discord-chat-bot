@@ -19,7 +19,7 @@ from aiohttp import web
 from .asr import ASRProvider, pcm_to_wav
 from plugins.api import InboundEvent, Plugin, Route
 
-from sayuki_bot.api import Tool
+from sayuki_bot.api import Event, Tool
 from sayuki_bot.discord.bot import SayukiBot
 
 logger = logging.getLogger(__name__)
@@ -227,6 +227,16 @@ class VoicePlugin(Plugin):
         bot = self.bot
         member, text_channel = self._validate_voice_source(guild_id, voice_id, user_id)
         now = datetime.now(timezone.utc)
+        event_id = time.time_ns()
+        event = Event(
+            event_id, guild_id, -voice_id, member.id, member.display_name,
+            f"語音轉文: {text[:1800]}", now,
+        )
+        history = list(bot.history[event.channel_id])
+        reason = bot.attention.decide(event, history, bot.user.id, now)
+        facts = bot.attention.facts(event, history, bot.user.id, now) + (
+            "此訊息來自語音 ASR 轉寫；原文可能有辨識錯誤。",
+        )
         route = Route(
             self.name,
             f"{guild_id}:{voice_id}",
@@ -237,14 +247,13 @@ class VoicePlugin(Plugin):
         status = bot.plugins.submit(
             InboundEvent(
                 route, member.id, member.display_name,
-                f"\u8a9e\u97f3\u8f49\u6587: {text[:1800]}", now, time.time_ns(),
-                (
-                "\u6b64\u8a0a\u606f\u4f86\u81ea\u8a9e\u97f3 ASR ",
-                "\u8f49\u5beb\uff1b\u539f\u6587\u53ef\u80fd\u6709\u8fa8\u8b58\u932f\u8aa4\u3002",
-                ),
+                event.text, now, event_id, facts,
                 source=SimpleNamespace(channel=text_channel, author=member),
+                reason=reason,
             )
         )
+        if status in {"queue_full", "ignored"}:
+            logger.info("Voice event admission result: %s", status)
         if status == "queue_full":
             logger.warning("Voice transcript dropped because the conversation queue is full")
         return status
